@@ -1,0 +1,213 @@
+// UI와 분리된 순수 로직: 날짜, 연속 학습(streak), 간격 반복(SRS), 작문 체크
+(function (root) {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  // 복습 간격(일). 맞힐 때마다 다음 단계로 이동.
+  const INTERVALS = [1, 3, 7, 14, 30, 60];
+
+  function todayStr(date = new Date()) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+
+  function parseDay(str) {
+    const [y, m, d] = str.split("-").map(Number);
+    return new Date(y, m - 1, d);
+  }
+
+  function addDays(str, n) {
+    const d = parseDay(str);
+    d.setDate(d.getDate() + n);
+    return todayStr(d);
+  }
+
+  function daysBetween(a, b) {
+    return Math.round((parseDay(b) - parseDay(a)) / DAY_MS);
+  }
+
+  function defaultState() {
+    return {
+      completed: [], // 완료한 레슨 id
+      cards: {}, // 복습 카드: id -> { due, step }
+      streak: 0,
+      lastStudy: null, // 마지막 학습 날짜
+      history: {}, // 날짜 -> 학습한 초
+      journal: [], // 작문 기록
+      settings: { rate: 0.9 }
+    };
+  }
+
+  // 오늘 학습을 마쳤을 때 연속 학습일 갱신
+  function markStudied(state, today) {
+    if (state.lastStudy === today) return state;
+    const gap = state.lastStudy ? daysBetween(state.lastStudy, today) : null;
+    state.streak = gap === 1 ? state.streak + 1 : 1;
+    state.lastStudy = today;
+    return state;
+  }
+
+  // 어제도 오늘도 공부하지 않았다면 화면상 연속 기록은 0
+  function currentStreak(state, today) {
+    if (!state.lastStudy) return 0;
+    return daysBetween(state.lastStudy, today) <= 1 ? state.streak : 0;
+  }
+
+  function addCards(state, lesson, today) {
+    const items = [
+      ...lesson.expressions.map((e, i) => [`${lesson.id}-e${i}`, e]),
+      ...lesson.drills.map((d, i) => [`${lesson.id}-d${i}`, d])
+    ];
+    for (const [id] of items) {
+      if (!state.cards[id]) state.cards[id] = { due: addDays(today, 1), step: 0 };
+    }
+    return state;
+  }
+
+  // grade: "again" | "good" | "easy"
+  function gradeCard(card, grade, today) {
+    let step = card.step;
+    if (grade === "again") step = 0;
+    else if (grade === "good") step = Math.min(step + 1, INTERVALS.length - 1);
+    else step = Math.min(step + 2, INTERVALS.length - 1);
+    const days = grade === "again" ? 1 : INTERVALS[step];
+    return { step, due: addDays(today, days) };
+  }
+
+  function lookupCard(lessons, id) {
+    const m = /^(\d+)-([ed])(\d+)$/.exec(id);
+    if (!m) return null;
+    const lesson = lessons.find((l) => l.id === Number(m[1]));
+    if (!lesson) return null;
+    const list = m[2] === "e" ? lesson.expressions : lesson.drills;
+    const item = list[Number(m[3])];
+    return item ? { id, lessonId: lesson.id, en: item.en, ko: item.ko } : null;
+  }
+
+  function dueCards(state, lessons, today, limit = Infinity) {
+    return Object.entries(state.cards)
+      .filter(([, c]) => c.due <= today)
+      .sort((a, b) => (a[1].due < b[1].due ? -1 : a[1].due > b[1].due ? 1 : 0))
+      .map(([id]) => lookupCard(lessons, id))
+      .filter(Boolean)
+      .slice(0, limit);
+  }
+
+  function nextLesson(state, lessons) {
+    return lessons.find((l) => !state.completed.includes(l.id)) || null;
+  }
+
+  function normalizeText(s) {
+    return s
+      .replace(/[‘’]/g, "'")
+      .replace(/[“”]/g, '"')
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function words(s) {
+    return normalizeText(s)
+      .toLowerCase()
+      .replace(/[^a-z0-9' ]/g, " ")
+      .split(" ")
+      .filter(Boolean);
+  }
+
+  function countSentences(s) {
+    return normalizeText(s)
+      .split(/[.!?]+/)
+      .filter((x) => x.trim().split(" ").filter(Boolean).length >= 2).length;
+  }
+
+  // 작문 자가 점검. 정답 하나를 강요하지 않고, 기본 규칙과 목표 패턴 사용 여부를 확인.
+  function checkWriting(text, writing) {
+    const t = normalizeText(text);
+    const wc = words(t).length;
+    const checks = [];
+    const minWords = writing.minWords || 5;
+    checks.push({ ok: wc >= minWords, label: `${minWords}단어 이상 쓰기 (지금 ${wc}단어)` });
+
+    if (writing.require && writing.require.length) {
+      const lower = t.toLowerCase();
+      const ok = writing.require.some((p) => new RegExp(p, "i").test(lower));
+      checks.push({ ok, label: "오늘의 패턴 사용하기" });
+    }
+
+    const sentences = t.split(/(?<=[.!?])\s+/).filter(Boolean);
+    checks.push({
+      ok: sentences.length > 0 && sentences.every((s) => /^["'(]?[A-Z0-9]/.test(s)),
+      label: "문장을 대문자로 시작하기"
+    });
+    checks.push({ ok: /[.!?]["')]?$/.test(t), label: "마침표·물음표로 끝맺기" });
+    checks.push({ ok: !/(^|[^a-zA-Z'])i([ ']|$)/.test(t), label: "'I'는 항상 대문자로 쓰기" });
+
+    const minSentences = writing.minSentences || 0;
+    if (minSentences > 1) {
+      const n = countSentences(t);
+      checks.push({ ok: n >= minSentences, label: `${minSentences}문장 이상 쓰기 (지금 ${n}문장)` });
+    }
+
+    return { checks, passed: checks.every((c) => c.ok), wordCount: wc };
+  }
+
+  // 말하기 연습용 유사도 (0~1): 목표 문장의 단어 중 몇 개를 맞혔는지
+  function similarity(target, said) {
+    const t = words(target);
+    const s = words(said);
+    if (!t.length) return 0;
+    const pool = [...s];
+    let hit = 0;
+    for (const w of t) {
+      const i = pool.indexOf(w);
+      if (i >= 0) {
+        hit++;
+        pool.splice(i, 1);
+      }
+    }
+    return hit / Math.max(t.length, s.length);
+  }
+
+  function tokenize(sentence) {
+    return normalizeText(sentence).split(" ");
+  }
+
+  function sameSentence(a, b) {
+    return words(a).join(" ") === words(b).join(" ");
+  }
+
+  function shuffled(arr, rand = Math.random) {
+    if (arr.length < 2) return [...arr];
+    let out;
+    do {
+      out = [...arr];
+      for (let i = out.length - 1; i > 0; i--) {
+        const j = Math.floor(rand() * (i + 1));
+        [out[i], out[j]] = [out[j], out[i]];
+      }
+    } while (out.join(" ") === arr.join(" "));
+    return out;
+  }
+
+  root.Core = {
+    INTERVALS,
+    todayStr,
+    addDays,
+    daysBetween,
+    defaultState,
+    markStudied,
+    currentStreak,
+    addCards,
+    gradeCard,
+    lookupCard,
+    dueCards,
+    nextLesson,
+    normalizeText,
+    words,
+    countSentences,
+    checkWriting,
+    similarity,
+    tokenize,
+    sameSentence,
+    shuffled
+  };
+})(globalThis);

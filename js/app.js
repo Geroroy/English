@@ -1,0 +1,772 @@
+(function () {
+  const { Core, LESSONS, FREE_PROMPTS } = globalThis;
+  const STORAGE_KEY = "ten-min-english-v1";
+  const SESSION_SECONDS = 10 * 60;
+  const REVIEW_LIMIT = 6;
+  const LEVEL_NAMES = { 1: "한 문장 쓰기", 2: "2~3문장 연결하기", 3: "짧은 단락 쓰기", 4: "자유 작문" };
+  const MIN_SENTENCES = { 1: 1, 2: 2, 3: 3, 4: 4 };
+
+  const view = document.getElementById("view");
+  const timerEl = document.getElementById("timer");
+  const streakEl = document.getElementById("streak");
+
+  // ---------- 저장 ----------
+  function load() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) return Object.assign(Core.defaultState(), JSON.parse(raw));
+    } catch (e) {
+      /* 저장소 사용 불가 시 기본값 */
+    }
+    return Core.defaultState();
+  }
+  let state = load();
+  function save() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (e) {
+      /* 무시 */
+    }
+    renderStreak();
+  }
+  const today = () => Core.todayStr();
+
+  // ---------- 유틸 ----------
+  function h(tag, attrs = {}, ...children) {
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v == null || v === false) continue;
+      if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+      else if (k === "class") el.className = v;
+      else if (k === "html") el.innerHTML = v;
+      else el.setAttribute(k, v === true ? "" : v);
+    }
+    for (const c of children.flat()) {
+      if (c == null || c === false) continue;
+      el.append(c.nodeType ? c : document.createTextNode(String(c)));
+    }
+    return el;
+  }
+  function mount(...nodes) {
+    view.replaceChildren(...nodes);
+    window.scrollTo(0, 0);
+  }
+  function renderStreak() {
+    streakEl.textContent = `🔥 ${Core.currentStreak(state, today())}`;
+  }
+
+  // ---------- 음성 ----------
+  const synth = window.speechSynthesis;
+  let voice = null;
+  function pickVoice() {
+    if (!synth) return;
+    const voices = synth.getVoices().filter((v) => /^en[-_]/i.test(v.lang));
+    voice =
+      voices.find((v) => /en[-_]US/i.test(v.lang) && /Google|Samantha|Natural/i.test(v.name)) ||
+      voices.find((v) => /en[-_]US/i.test(v.lang)) ||
+      voices[0] ||
+      null;
+  }
+  if (synth) {
+    pickVoice();
+    synth.onvoiceschanged = pickVoice;
+  }
+  function speak(text, rate) {
+    if (!synth) return Promise.resolve();
+    synth.cancel();
+    return new Promise((resolve) => {
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = "en-US";
+      if (voice) u.voice = voice;
+      u.rate = rate || state.settings.rate;
+      u.onend = u.onerror = resolve;
+      synth.speak(u);
+    });
+  }
+  function speakBtn(text, label = "🔊") {
+    return h("button", { class: "icon-btn", title: "듣기", "aria-label": "듣기", onclick: () => speak(text) }, label);
+  }
+
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  // 따라 말하기: 브라우저가 음성 인식을 지원할 때만 표시
+  function shadowBtn(target, resultEl) {
+    if (!Recognition) return null;
+    const btn = h("button", { class: "icon-btn", title: "따라 말하기", "aria-label": "따라 말하기" }, "🎤");
+    btn.onclick = () => {
+      const rec = new Recognition();
+      rec.lang = "en-US";
+      rec.interimResults = false;
+      rec.maxAlternatives = 3;
+      btn.classList.add("recording");
+      resultEl.textContent = "듣고 있어요… 말해 보세요";
+      resultEl.className = "shadow-result";
+      rec.onresult = (e) => {
+        const alts = Array.from(e.results[0]).map((a) => a.transcript);
+        const best = alts.reduce(
+          (b, a) => (Core.similarity(target, a) > Core.similarity(target, b) ? a : b),
+          alts[0]
+        );
+        const score = Math.round(Core.similarity(target, best) * 100);
+        resultEl.textContent = `"${best}" — ${score}% ${score >= 80 ? "👏 훌륭해요!" : score >= 50 ? "👍 좋아요, 한 번 더!" : "🙂 천천히 다시 해 봐요"}`;
+        resultEl.className = "shadow-result " + (score >= 80 ? "good" : score >= 50 ? "ok" : "bad");
+      };
+      rec.onerror = () => {
+        resultEl.textContent = "음성을 인식하지 못했어요. 마이크 권한을 확인해 주세요.";
+      };
+      rec.onend = () => btn.classList.remove("recording");
+      rec.start();
+    };
+    return btn;
+  }
+
+  // ---------- 10분 타이머 ----------
+  let timerId = null;
+  let elapsed = 0;
+  function startTimer() {
+    stopTimer();
+    elapsed = 0;
+    timerEl.hidden = false;
+    tick();
+    timerId = setInterval(() => {
+      if (document.hidden) return;
+      elapsed++;
+      tick();
+    }, 1000);
+  }
+  function tick() {
+    const left = SESSION_SECONDS - elapsed;
+    const a = Math.abs(left);
+    timerEl.textContent = `${left < 0 ? "+" : ""}${Math.floor(a / 60)}:${String(a % 60).padStart(2, "0")}`;
+    timerEl.classList.toggle("over", left < 0);
+  }
+  function stopTimer() {
+    if (timerId) clearInterval(timerId);
+    timerId = null;
+    timerEl.hidden = true;
+    return elapsed;
+  }
+
+  // ---------- 탭 ----------
+  const tabs = document.querySelectorAll(".tabs button");
+  function setTab(name) {
+    tabs.forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+  }
+  tabs.forEach((b) =>
+    b.addEventListener("click", () => {
+      if (session && !confirm("학습을 중단할까요? 진행 중인 내용은 저장되지 않아요.")) return;
+      endSession();
+      route(b.dataset.tab);
+    })
+  );
+  function route(name) {
+    setTab(name);
+    ({ home: renderHome, review: renderReviewTab, journal: renderJournal, progress: renderProgress })[name]();
+  }
+
+  // ---------- 홈 ----------
+  function freePromptForToday() {
+    const n = Core.daysBetween("2024-01-01", today());
+    return FREE_PROMPTS[((n % FREE_PROMPTS.length) + FREE_PROMPTS.length) % FREE_PROMPTS.length];
+  }
+
+  function renderHome() {
+    const lesson = Core.nextLesson(state, LESSONS);
+    const due = Core.dueCards(state, LESSONS, today()).length;
+    const doneToday = state.lastStudy === today();
+    const done = state.completed.length;
+
+    const plan = lesson
+      ? [
+          ["🔁", "복습", due ? `${Math.min(due, REVIEW_LIMIT)}개` : "없음", "1분"],
+          ["💡", "핵심 표현 익히기", lesson.pattern.en, "3분"],
+          ["💬", "대화 듣기", "상황 속에서", "1분"],
+          ["🧩", "문장 만들기", "한→영 조립", "2분"],
+          ["✍️", "작문", LEVEL_NAMES[lesson.level], "3분"]
+        ]
+      : [
+          ["🔁", "복습", due ? `${Math.min(due, REVIEW_LIMIT)}개` : "없음", "3분"],
+          ["✍️", "자유 작문", freePromptForToday().prompt, "7분"]
+        ];
+
+    mount(
+      h(
+        "section",
+        { class: "card hero" },
+        h("p", { class: "eyebrow" }, doneToday ? "오늘 목표 달성! 🎉" : "오늘의 10분"),
+        lesson
+          ? [
+              h("h1", {}, `Day ${lesson.id}. ${lesson.title}`),
+              h("p", { class: "pattern" }, lesson.pattern.en),
+              h("p", { class: "muted" }, lesson.pattern.ko)
+            ]
+          : [
+              h("h1", {}, "자유 작문 모드"),
+              h("p", { class: "muted" }, "20개 레슨을 모두 마쳤어요! 이제 매일 복습과 자유 작문으로 실력을 굳혀요.")
+            ],
+        h(
+          "ol",
+          { class: "plan" },
+          plan.map(([icon, name, sub, min]) =>
+            h("li", {}, h("span", { class: "plan-icon" }, icon), h("div", {}, h("strong", {}, name), h("small", {}, sub)), h("span", { class: "plan-min" }, min))
+          )
+        ),
+        h("button", { class: "btn primary big", onclick: () => startSession(lesson) }, doneToday ? "한 번 더 공부하기" : "시작하기 ▶")
+      ),
+      h(
+        "section",
+        { class: "card" },
+        h("h2", {}, "나의 작문 단계"),
+        h("div", { class: "levels" }, [1, 2, 3, 4].map((lv) => {
+          const cur = lesson ? lesson.level : 4;
+          return h("div", { class: "level" + (lv === cur ? " current" : lv < cur ? " passed" : "") }, h("b", {}, `Lv.${lv}`), h("span", {}, LEVEL_NAMES[lv]));
+        })),
+        h("p", { class: "muted small" }, `완료한 레슨 ${done} / ${LESSONS.length} · 작문 ${state.journal.length}편`)
+      )
+    );
+  }
+
+  // ---------- 학습 세션 ----------
+  let session = null;
+
+  function startSession(lesson) {
+    const reviews = Core.dueCards(state, LESSONS, today(), REVIEW_LIMIT);
+    const steps = [];
+    if (reviews.length) steps.push("review");
+    if (lesson) steps.push("learn", "dialogue", "drill", "write");
+    else steps.push("write");
+    session = { lesson, reviews, steps, index: 0, entry: null };
+    startTimer();
+    renderStep();
+  }
+
+  function endSession() {
+    if (!session) return;
+    session = null;
+    stopTimer();
+    if (synth) synth.cancel();
+  }
+
+  function nextStep() {
+    session.index++;
+    renderStep();
+  }
+
+  const STEP_LABEL = { review: "복습", learn: "핵심 표현", dialogue: "대화", drill: "문장 만들기", write: "작문" };
+
+  function stepHeader() {
+    const { steps, index } = session;
+    return h(
+      "div",
+      { class: "stepper" },
+      steps.map((s, i) => h("div", { class: "step" + (i < index ? " done" : i === index ? " now" : "") }, h("i"), h("span", {}, STEP_LABEL[s])))
+    );
+  }
+
+  function renderStep() {
+    const step = session.steps[session.index];
+    if (!step) return finishSession();
+    ({ review: stepReview, learn: stepLearn, dialogue: stepDialogue, drill: stepDrill, write: stepWrite })[step]();
+  }
+
+  // 1) 복습 카드 (세션 안과 복습 탭에서 공용)
+  function reviewDeck(cards, onDone) {
+    let i = 0;
+    const box = h("div");
+    function show() {
+      if (i >= cards.length) return onDone();
+      const c = cards[i];
+      const result = h("p", { class: "shadow-result" });
+      const answer = h(
+        "div",
+        { class: "answer", hidden: true },
+        h("p", { class: "en big-en" }, c.en, " ", speakBtn(c.en), shadowBtn(c.en, result)),
+        result,
+        h(
+          "div",
+          { class: "grade" },
+          h("button", { class: "btn again", onclick: () => grade("again") }, "다시", h("small", {}, "내일")),
+          h("button", { class: "btn good", onclick: () => grade("good") }, "알았어요", h("small", {}, "조금 뒤")),
+          h("button", { class: "btn easy", onclick: () => grade("easy") }, "쉬워요", h("small", {}, "한참 뒤"))
+        )
+      );
+      const reveal = h(
+        "button",
+        {
+          class: "btn primary",
+          onclick: () => {
+            reveal.remove();
+            answer.hidden = false;
+            speak(c.en);
+          }
+        },
+        "정답 보기"
+      );
+      box.replaceChildren(
+        h(
+          "div",
+          { class: "card flash" },
+          h("p", { class: "muted small" }, `${i + 1} / ${cards.length} · 영어로 말해 보세요`),
+          h("p", { class: "ko big-ko" }, c.ko),
+          reveal,
+          answer
+        )
+      );
+    }
+    function grade(g) {
+      state.cards[cards[i].id] = Core.gradeCard(state.cards[cards[i].id], g, today());
+      save();
+      i++;
+      show();
+    }
+    show();
+    return box;
+  }
+
+  function stepReview() {
+    mount(
+      stepHeader(),
+      h("h2", {}, "🔁 복습: 기억나나요?"),
+      h("p", { class: "muted" }, "한국어를 보고 소리 내어 영어로 말한 뒤 정답을 확인하세요."),
+      reviewDeck(session.reviews, nextStep)
+    );
+  }
+
+  // 2) 핵심 표현
+  function stepLearn() {
+    const l = session.lesson;
+    mount(
+      stepHeader(),
+      h(
+        "section",
+        { class: "card" },
+        h("p", { class: "eyebrow" }, "오늘의 패턴"),
+        h("p", { class: "pattern" }, l.pattern.en),
+        h("p", { class: "muted" }, l.pattern.ko)
+      ),
+      l.expressions.map((e, i) => {
+        const result = h("p", { class: "shadow-result" });
+        return h(
+          "section",
+          { class: "card expr" },
+          h("div", { class: "row" }, h("span", { class: "num" }, i + 1), h("p", { class: "en" }, e.en), speakBtn(e.en), shadowBtn(e.en, result)),
+          h("p", { class: "ko" }, e.ko),
+          h("p", { class: "tip" }, "💡 ", e.tip),
+          result
+        );
+      }),
+      h("p", { class: "muted small center" }, Recognition ? "🔊 듣고 🎤 눌러 따라 말해 보세요. 3번씩 소리 내어 읽으면 효과가 커요." : "🔊 듣고 소리 내어 3번씩 따라 읽어 보세요."),
+      h("button", { class: "btn primary big", onclick: nextStep }, "다음: 대화 듣기 →")
+    );
+  }
+
+  // 3) 대화
+  function stepDialogue() {
+    const l = session.lesson;
+    let showKo = false;
+    const lines = l.dialogue.map((d) =>
+      h(
+        "div",
+        { class: `bubble ${d.s === "A" ? "left" : "right"}` },
+        h("p", { class: "en" }, d.en, " ", speakBtn(d.en)),
+        h("p", { class: "ko", hidden: true }, d.ko)
+      )
+    );
+    const toggle = h(
+      "button",
+      {
+        class: "btn",
+        onclick: () => {
+          showKo = !showKo;
+          lines.forEach((el) => (el.querySelector(".ko").hidden = !showKo));
+          toggle.textContent = showKo ? "해석 숨기기" : "해석 보기";
+        }
+      },
+      "해석 보기"
+    );
+    const playAll = h(
+      "button",
+      {
+        class: "btn",
+        onclick: async () => {
+          for (const [i, d] of l.dialogue.entries()) {
+            if (!session) return;
+            lines.forEach((el) => el.classList.remove("playing"));
+            lines[i].classList.add("playing");
+            await speak(d.en);
+          }
+          lines.forEach((el) => el.classList.remove("playing"));
+        }
+      },
+      "▶ 전체 듣기"
+    );
+    mount(
+      stepHeader(),
+      h("h2", {}, "💬 상황 속 대화"),
+      h("p", { class: "muted" }, "먼저 해석 없이 들어 보고, B의 대사를 직접 소리 내어 연기해 보세요."),
+      h("div", { class: "row gap" }, playAll, toggle),
+      h("div", { class: "chat" }, lines),
+      h("button", { class: "btn primary big", onclick: nextStep }, "다음: 문장 만들기 →")
+    );
+  }
+
+  // 4) 문장 조립 드릴
+  function stepDrill() {
+    const drills = session.lesson.drills;
+    let i = 0;
+    const box = h("div");
+    function show() {
+      if (i >= drills.length) return nextStep();
+      const d = drills[i];
+      const tokens = Core.tokenize(d.en);
+      const bank = Core.shuffled(tokens.map((_, k) => k)).map((k) => ({ t: tokens[k], k }));
+      const picked = [];
+      const answerEl = h("div", { class: "answer-line" });
+      const bankEl = h("div", { class: "bank" });
+      const feedback = h("p", { class: "feedback" });
+      const checkBtn = h("button", { class: "btn primary", onclick: check }, "확인");
+      let solved = false;
+
+      function draw() {
+        answerEl.replaceChildren(
+          ...(picked.length ? picked.map((p) => h("button", { class: "chip on", onclick: () => unpick(p) }, p.t)) : [h("span", { class: "placeholder" }, "단어를 순서대로 눌러 보세요")])
+        );
+        bankEl.replaceChildren(
+          ...bank.map((b) => h("button", { class: "chip", disabled: picked.includes(b), onclick: () => pick(b) }, b.t))
+        );
+      }
+      function pick(b) {
+        if (solved) return;
+        picked.push(b);
+        feedback.textContent = "";
+        draw();
+      }
+      function unpick(p) {
+        if (solved) return;
+        picked.splice(picked.indexOf(p), 1);
+        draw();
+      }
+      function check() {
+        if (solved) {
+          i++;
+          return show();
+        }
+        const said = picked.map((p) => p.t).join(" ");
+        if (Core.sameSentence(said, d.en)) {
+          solved = true;
+          feedback.className = "feedback good";
+          feedback.textContent = "정답! 소리 내어 한 번 읽어 보세요.";
+          speak(d.en);
+          checkBtn.textContent = i + 1 < drills.length ? "다음 문제 →" : "다음: 작문 →";
+        } else {
+          feedback.className = "feedback bad";
+          feedback.replaceChildren("아쉬워요. 다시 해 보세요. ", h("button", { class: "link", onclick: () => { feedback.textContent = `정답: ${d.en}`; } }, "정답 보기"));
+        }
+      }
+      draw();
+      box.replaceChildren(
+        h(
+          "section",
+          { class: "card" },
+          h("p", { class: "muted small" }, `${i + 1} / ${drills.length}`),
+          h("p", { class: "ko big-ko" }, d.ko),
+          answerEl,
+          bankEl,
+          feedback,
+          h("div", { class: "row gap" }, h("button", { class: "btn", onclick: () => { if (!solved) { picked.length = 0; draw(); } } }, "초기화"), checkBtn)
+        )
+      );
+    }
+    mount(stepHeader(), h("h2", {}, "🧩 영어 문장 만들기"), h("p", { class: "muted" }, "한국어 뜻에 맞게 단어를 배열하세요. 영어의 어순이 몸에 붙어요."), box);
+    show();
+  }
+
+  // 5) 작문
+  function writingTask() {
+    const l = session.lesson;
+    if (l) {
+      return {
+        level: l.level,
+        prompt: l.writing.prompt,
+        hints: l.writing.hints,
+        samples: l.writing.samples,
+        rule: { ...l.writing, minSentences: l.writing.minSentences || MIN_SENTENCES[l.level] }
+      };
+    }
+    const f = freePromptForToday();
+    return { level: 4, prompt: f.prompt, hints: f.hints, samples: [], rule: { minWords: 30, minSentences: MIN_SENTENCES[4] } };
+  }
+
+  function stepWrite() {
+    const task = writingTask();
+    const ta = h("textarea", { rows: task.level >= 3 ? 8 : 4, placeholder: "영어로 써 보세요…", autocapitalize: "sentences", spellcheck: "true" });
+    const checklist = h("ul", { class: "checklist" });
+    const after = h("div");
+    const draft = `draft-${today()}-${session.lesson ? session.lesson.id : "free"}`;
+    try {
+      ta.value = sessionStorage.getItem(draft) || "";
+    } catch (e) {
+      /* 무시 */
+    }
+    ta.addEventListener("input", () => {
+      try {
+        sessionStorage.setItem(draft, ta.value);
+      } catch (e) {
+        /* 무시 */
+      }
+      renderChecks();
+    });
+
+    function renderChecks() {
+      const r = Core.checkWriting(ta.value, task.rule);
+      checklist.replaceChildren(...r.checks.map((c) => h("li", { class: c.ok ? "ok" : "" }, c.ok ? "✅ " : "⬜ ", c.label)));
+      return r;
+    }
+
+    const submit = h(
+      "button",
+      {
+        class: "btn primary big",
+        onclick: () => {
+          const r = renderChecks();
+          if (!r.passed && !confirm("아직 체크리스트를 모두 채우지 못했어요. 그래도 제출할까요?")) return;
+          submit.hidden = true;
+          ta.readOnly = true;
+          showFeedback(task, ta.value, after);
+        }
+      },
+      "제출하고 예시 보기"
+    );
+
+    mount(
+      stepHeader(),
+      h("h2", {}, "✍️ 직접 써 보기"),
+      h("p", { class: "badge" }, `Lv.${task.level} ${LEVEL_NAMES[task.level]}`),
+      h("section", { class: "card" }, h("p", { class: "prompt" }, task.prompt), h("div", { class: "hints" }, h("span", { class: "muted small" }, "힌트 "), task.hints.map((x) => h("button", { class: "chip hint", onclick: () => insertAtCursor(ta, x) }, x)))),
+      ta,
+      checklist,
+      submit,
+      after
+    );
+    renderChecks();
+    ta.focus();
+  }
+
+  function insertAtCursor(ta, text) {
+    if (ta.readOnly) return;
+    const clean = text.replace(/~/g, "").replace(/\s+/g, " ").trim();
+    const s = ta.selectionStart ?? ta.value.length;
+    const before = ta.value.slice(0, s);
+    const pad = before && !/\s$/.test(before) ? " " : "";
+    ta.value = before + pad + clean + " " + ta.value.slice(ta.selectionEnd ?? s);
+    ta.focus();
+    ta.dispatchEvent(new Event("input"));
+  }
+
+  function showFeedback(task, text, container) {
+    const revise = h("textarea", { rows: task.level >= 3 ? 8 : 4 });
+    revise.value = text;
+    container.replaceChildren(
+      task.samples.length
+        ? h("section", { class: "card sample" }, h("p", { class: "eyebrow" }, "예시 답안"), task.samples.map((s) => h("p", { class: "en" }, s, " ", speakBtn(s))))
+        : null,
+      h(
+        "section",
+        { class: "card" },
+        h("p", { class: "eyebrow" }, "스스로 고쳐 쓰기"),
+        h("p", { class: "muted small" }, "예시와 비교해서 더 자연스럽게 바꾸고 싶은 부분을 고쳐 보세요. 좋은 표현은 훔쳐 와도 돼요!"),
+        h("ul", { class: "checklist" }, [
+          "주어와 동사가 모두 있나요?",
+          "시제(현재/과거/미래)가 맞나요?",
+          "a / the / 복수형(-s)을 빠뜨리지 않았나요?",
+          "문장과 문장 사이를 and, but, because, so 등으로 이어 봤나요?"
+        ].map((q) => h("li", {}, "🔎 ", q))),
+        revise
+      ),
+      h("button", { class: "btn primary big", onclick: () => saveWriting(task, text, revise.value) }, "작문노트에 저장하고 마치기 ✓")
+    );
+    container.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function saveWriting(task, first, final) {
+    if (!final.trim()) return alert("내용을 입력해 주세요.");
+    state.journal.unshift({
+      date: today(),
+      lessonId: session.lesson ? session.lesson.id : null,
+      level: task.level,
+      prompt: task.prompt,
+      first: first.trim(),
+      text: final.trim()
+    });
+    try {
+      sessionStorage.removeItem(`draft-${today()}-${session.lesson ? session.lesson.id : "free"}`);
+    } catch (e) {
+      /* 무시 */
+    }
+    nextStep();
+  }
+
+  function finishSession() {
+    const l = session.lesson;
+    const seconds = stopTimer();
+    if (l && !state.completed.includes(l.id)) {
+      state.completed.push(l.id);
+      Core.addCards(state, l, today());
+    }
+    state.history[today()] = (state.history[today()] || 0) + seconds;
+    Core.markStudied(state, today());
+    save();
+    session = null;
+
+    const mins = Math.max(1, Math.round(seconds / 60));
+    const next = Core.nextLesson(state, LESSONS);
+    mount(
+      h(
+        "section",
+        { class: "card hero center" },
+        h("p", { class: "celebrate" }, "🎉"),
+        h("h1", {}, "오늘의 10분 완료!"),
+        h("p", {}, `${mins}분 동안 집중했어요. 연속 ${Core.currentStreak(state, today())}일째!`),
+        l ? h("p", { class: "muted" }, `오늘 배운 표현 ${l.expressions.length + l.drills.length}개는 내일부터 복습 카드로 다시 나와요.`) : null,
+        next && l && next.level > l.level ? h("p", { class: "badge" }, `🆙 다음 레슨부터 작문 Lv.${next.level} '${LEVEL_NAMES[next.level]}'로 올라가요!`) : null,
+        h("div", { class: "row gap center" }, h("button", { class: "btn", onclick: () => route("journal") }, "작문노트 보기"), h("button", { class: "btn primary", onclick: () => route("home") }, "홈으로"))
+      )
+    );
+  }
+
+  // ---------- 복습 탭 ----------
+  function renderReviewTab() {
+    const due = Core.dueCards(state, LESSONS, today());
+    const total = Object.keys(state.cards).length;
+    if (!due.length) {
+      mount(
+        h("h2", {}, "🔁 복습"),
+        h("section", { class: "card center" }, h("p", { class: "celebrate" }, "✨"), h("p", {}, total ? "오늘 복습할 카드를 모두 끝냈어요!" : "레슨을 마치면 배운 표현이 복습 카드로 쌓여요."), h("p", { class: "muted small" }, `전체 카드 ${total}개`)),
+        practiceAll()
+      );
+      return;
+    }
+    mount(
+      h("h2", {}, `🔁 복습 (${due.length}개)`),
+      h("p", { class: "muted" }, "잊어버릴 때쯤 다시 보여 주는 간격 반복 방식이에요."),
+      reviewDeck(due, renderReviewTab)
+    );
+  }
+
+  // 배운 표현 전체를 소리 내어 훑어보는 목록
+  function practiceAll() {
+    const learned = LESSONS.filter((l) => state.completed.includes(l.id));
+    if (!learned.length) return null;
+    return h(
+      "section",
+      { class: "card" },
+      h("h3", {}, "배운 표현 모아 보기"),
+      learned.map((l) =>
+        h("details", {}, h("summary", {}, `Day ${l.id}. ${l.title}`), [...l.expressions, ...l.drills].map((e) => h("div", { class: "mini" }, h("p", { class: "en" }, e.en, " ", speakBtn(e.en)), h("p", { class: "ko" }, e.ko))))
+      )
+    );
+  }
+
+  // ---------- 작문노트 ----------
+  function renderJournal() {
+    if (!state.journal.length) {
+      mount(h("h2", {}, "✍️ 작문노트"), h("section", { class: "card center" }, h("p", {}, "아직 작문이 없어요."), h("p", { class: "muted small" }, "매일 쓴 영작이 여기에 쌓여요. 한 달 뒤 첫 글과 비교해 보세요!")));
+      return;
+    }
+    const totalWords = state.journal.reduce((n, j) => n + Core.words(j.text).length, 0);
+    mount(
+      h("h2", {}, "✍️ 작문노트"),
+      h("p", { class: "muted" }, `${state.journal.length}편 · 총 ${totalWords}단어를 영어로 썼어요.`),
+      h("div", { class: "row gap" }, h("button", { class: "btn", onclick: exportJournal }, "📋 전체 복사")),
+      state.journal.map((j, idx) =>
+        h(
+          "article",
+          { class: "card entry" },
+          h("div", { class: "row between" }, h("span", { class: "muted small" }, `${j.date} · Lv.${j.level}`), h("button", { class: "link danger", onclick: () => { if (confirm("이 글을 삭제할까요?")) { state.journal.splice(idx, 1); save(); renderJournal(); } } }, "삭제")),
+          h("p", { class: "muted small" }, j.prompt),
+          h("p", { class: "en entry-text" }, j.text, " ", speakBtn(j.text)),
+          j.first && j.first !== j.text ? h("details", {}, h("summary", { class: "small" }, "고치기 전 글 보기"), h("p", { class: "muted" }, j.first)) : null
+        )
+      )
+    );
+  }
+
+  function exportJournal() {
+    const text = state.journal.map((j) => `[${j.date}] ${j.prompt}\n${j.text}`).join("\n\n");
+    if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => alert("작문노트를 복사했어요."), () => prompt("복사해서 사용하세요:", text));
+    else prompt("복사해서 사용하세요:", text);
+  }
+
+  // ---------- 진도 ----------
+  function renderProgress() {
+    const days = Object.keys(state.history).length;
+    const totalMin = Math.round(Object.values(state.history).reduce((a, b) => a + b, 0) / 60);
+    const last28 = Array.from({ length: 28 }, (_, i) => Core.addDays(today(), i - 27));
+    const rate = h("input", { type: "range", min: "0.6", max: "1.2", step: "0.1", value: String(state.settings.rate) });
+    const rateLabel = h("span", {}, `${state.settings.rate}x`);
+    rate.addEventListener("input", () => {
+      state.settings.rate = Number(rate.value);
+      rateLabel.textContent = `${state.settings.rate}x`;
+      save();
+    });
+
+    mount(
+      h("h2", {}, "📈 나의 진도"),
+      h(
+        "div",
+        { class: "stats" },
+        [
+          ["🔥", Core.currentStreak(state, today()), "연속 학습일"],
+          ["📅", days, "학습한 날"],
+          ["⏱️", totalMin, "총 학습(분)"],
+          ["✍️", state.journal.length, "작문"]
+        ].map(([i, n, label]) => h("div", { class: "stat" }, h("span", {}, i), h("b", {}, n), h("small", {}, label)))
+      ),
+      h(
+        "section",
+        { class: "card" },
+        h("h3", {}, "최근 4주"),
+        h("div", { class: "calendar" }, last28.map((d) => h("i", { class: state.history[d] ? "on" : "", title: d })))
+      ),
+      h(
+        "section",
+        { class: "card" },
+        h("h3", {}, "커리큘럼"),
+        [1, 2, 3].map((lv) =>
+          h(
+            "div",
+            {},
+            h("p", { class: "eyebrow" }, `Lv.${lv} ${LEVEL_NAMES[lv]}`),
+            h("ul", { class: "lessons" }, LESSONS.filter((l) => l.level === lv).map((l) => h("li", { class: state.completed.includes(l.id) ? "done" : "" }, state.completed.includes(l.id) ? "✅ " : "⬜ ", `Day ${l.id}. ${l.title}`, h("small", {}, l.pattern.en))))
+          )
+        )
+      ),
+      h(
+        "section",
+        { class: "card" },
+        h("h3", {}, "설정"),
+        h("label", { class: "row gap" }, "읽기 속도", rate, rateLabel, speakBtn("This is how fast I will speak.")),
+        h(
+          "button",
+          {
+            class: "link danger",
+            onclick: () => {
+              if (confirm("모든 학습 기록을 지울까요? 되돌릴 수 없어요.")) {
+                state = Core.defaultState();
+                save();
+                route("home");
+              }
+            }
+          },
+          "학습 기록 초기화"
+        )
+      )
+    );
+  }
+
+  // ---------- 시작 ----------
+  renderStreak();
+  route("home");
+  if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
+})();

@@ -1,0 +1,12 @@
+{
+  "name": "10분 영어 - 회화에서 영작까지",
+  "short_name": "10분 영어",
+  "description": "하루 10분, 실생활 영어회화에서 스스로 쓰는 영작까지",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f6fb",
+  "theme_color": "#2f6fed",
+  "lang": "ko",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
