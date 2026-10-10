@@ -42,10 +42,12 @@ GitHub Pages 등 아무 정적 호스팅에 그대로 올려도 됩니다. 학�
 index.html            화면 틀
 styles.css            스타일 (다크 모드 지원)
 js/lessons.js         커리큘럼 데이터 (레슨 20개 + 자유 작문 주제)
+js/scenes.js          문장별 그림 장면(이모지)과 레슨 배경색
 js/core.js            순수 로직: 연속 학습일, 간격 반복, 작문 체크, 말하기 유사도
 js/app.js             화면과 학습 흐름
 sw.js                 오프라인 캐시
 tests/core.test.mjs   로직·데이터 테스트
+docs/design-brief.md  "오늘의 문장" 화면 디자인 브리프
 ```
 
 레슨을 추가하려면 `js/lessons.js`에 같은 형식의 객체를 넣으면 됩니다.

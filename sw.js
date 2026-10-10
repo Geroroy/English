@@ -1,6 +1,6 @@
 // 오프라인 사용을 위한 서비스 워커: 정적 파일을 캐시하고, 온라인이면 최신 파일로 갱신
-const CACHE = "ten-min-english-v1";
-const ASSETS = ["./", "index.html", "styles.css", "js/lessons.js", "js/core.js", "js/app.js", "manifest.webmanifest", "icon.svg"];
+const CACHE = "ten-min-english-v2";
+const ASSETS = ["./", "index.html", "styles.css", "js/lessons.js", "js/scenes.js", "js/core.js", "js/app.js", "manifest.webmanifest", "icon.svg"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));

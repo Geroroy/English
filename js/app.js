@@ -1,5 +1,5 @@
 (function () {
-  const { Core, LESSONS, FREE_PROMPTS } = globalThis;
+  const { Core, LESSONS, FREE_PROMPTS, SCENES } = globalThis;
   const STORAGE_KEY = "ten-min-english-v1";
   const SESSION_SECONDS = 10 * 60;
   const REVIEW_LIMIT = 6;
@@ -201,58 +201,96 @@
     return FREE_PROMPTS[((n % FREE_PROMPTS.length) + FREE_PROMPTS.length) % FREE_PROMPTS.length];
   }
 
+  // ---------- 문장 카드 (그림 + 영어 + 한국어) ----------
+  function sceneFor(id) {
+    const lessonId = Number(String(id).split("-")[0]);
+    const icons = (SCENES.cards[id] || ["💬"]).slice(0, 3);
+    const el = h(
+      "div",
+      { class: "scene", role: "img", "aria-label": "상황 그림" },
+      h("span", { class: "scene-main" }, icons[0]),
+      icons[1] ? h("span", { class: "scene-a" }, icons[1]) : null,
+      icons[2] ? h("span", { class: "scene-b" }, icons[2]) : null
+    );
+    el.style.setProperty("--h", SCENES.hue[lessonId] ?? 210);
+    return el;
+  }
+
+  function sentenceCard(item, { hideEn = false } = {}) {
+    return h(
+      "article",
+      { class: "sentence" },
+      sceneFor(item.id),
+      h(
+        "div",
+        { class: "sentence-text" },
+        h("p", { class: "sentence-en", hidden: hideEn }, item.en),
+        h("p", { class: "sentence-ko" }, item.ko)
+      )
+    );
+  }
+
+  // 레슨을 다 마친 뒤 홈에 띄울 오늘의 복습 문장 3개 (날짜마다 바뀜)
+  function reviewSentencesForToday() {
+    const pool = LESSONS.filter((l) => state.completed.includes(l.id)).flatMap((l) =>
+      l.expressions.map((e, i) => ({ id: `${l.id}-e${i}`, en: e.en, ko: e.ko }))
+    );
+    const start = (Core.daysBetween("2024-01-01", today()) * 3) % pool.length;
+    return [0, 1, 2].map((k) => pool[(start + k) % pool.length]);
+  }
+
+  // 카드 여러 장을 한 장씩 넘겨 보는 뷰어 (스와이프, 점, 화살표)
+  function carousel(items, { render, onChange } = {}) {
+    let idx = 0;
+    const stage = h("div", { class: "stage" });
+    const dots = items.map((_, i) => h("button", { class: "dot", "aria-label": `${i + 1}번째 문장`, onclick: () => go(i) }));
+    const prev = h("button", { class: "nav-btn", "aria-label": "이전 문장", onclick: () => go(idx - 1) }, "‹");
+    const next = h("button", { class: "nav-btn", "aria-label": "다음 문장", onclick: () => go(idx + 1) }, "›");
+    function go(i) {
+      idx = Math.max(0, Math.min(items.length - 1, i));
+      stage.replaceChildren(render(items[idx], idx));
+      dots.forEach((d, k) => d.classList.toggle("on", k === idx));
+      prev.disabled = idx === 0;
+      next.disabled = idx === items.length - 1;
+      if (onChange) onChange(idx);
+    }
+    let x0 = null;
+    stage.addEventListener("touchstart", (e) => (x0 = e.touches[0].clientX), { passive: true });
+    stage.addEventListener("touchend", (e) => {
+      if (x0 == null) return;
+      const dx = e.changedTouches[0].clientX - x0;
+      if (Math.abs(dx) > 40) go(idx + (dx < 0 ? 1 : -1));
+      x0 = null;
+    });
+    go(0);
+    const pager = items.length > 1 ? h("div", { class: "pager" }, prev, h("div", { class: "dots" }, dots), next) : null;
+    return { stage, pager, go, get index() { return idx; } };
+  }
+
+  // 홈: 오늘 배울 문장과 번역만 크게
   function renderHome() {
     const lesson = Core.nextLesson(state, LESSONS);
-    const due = Core.dueCards(state, LESSONS, today()).length;
     const doneToday = state.lastStudy === today();
-    const done = state.completed.length;
+    const items = lesson
+      ? lesson.expressions.map((e, i) => ({ id: `${lesson.id}-e${i}`, en: e.en, ko: e.ko }))
+      : reviewSentencesForToday();
 
-    const plan = lesson
-      ? [
-          ["🔁", "복습", due ? `${Math.min(due, REVIEW_LIMIT)}개` : "없음", "1분"],
-          ["💡", "핵심 표현 익히기", lesson.pattern.en, "3분"],
-          ["💬", "대화 듣기", "상황 속에서", "1분"],
-          ["🧩", "문장 만들기", "한→영 조립", "2분"],
-          ["✍️", "작문", LEVEL_NAMES[lesson.level], "3분"]
-        ]
-      : [
-          ["🔁", "복습", due ? `${Math.min(due, REVIEW_LIMIT)}개` : "없음", "3분"],
-          ["✍️", "자유 작문", freePromptForToday().prompt, "7분"]
-        ];
+    const listen = h("button", { class: "listen", onclick: () => speak(items[view_.index].en) }, "🔊 듣기");
+    const view_ = carousel(items, { render: (it) => sentenceCard(it) });
 
     mount(
       h(
-        "section",
-        { class: "card hero" },
-        h("p", { class: "eyebrow" }, doneToday ? "오늘 목표 달성! 🎉" : "오늘의 10분"),
-        lesson
-          ? [
-              h("h1", {}, `Day ${lesson.id}. ${lesson.title}`),
-              h("p", { class: "pattern" }, lesson.pattern.en),
-              h("p", { class: "muted" }, lesson.pattern.ko)
-            ]
-          : [
-              h("h1", {}, "자유 작문 모드"),
-              h("p", { class: "muted" }, "20개 레슨을 모두 마쳤어요! 이제 매일 복습과 자유 작문으로 실력을 굳혀요.")
-            ],
+        "div",
+        { class: "today" },
+        h("p", { class: "today-label" }, lesson ? `오늘의 문장 · Day ${lesson.id}` : "오늘의 복습 문장"),
+        view_.stage,
+        h("div", { class: "today-actions" }, listen),
+        view_.pager,
         h(
-          "ol",
-          { class: "plan" },
-          plan.map(([icon, name, sub, min]) =>
-            h("li", {}, h("span", { class: "plan-icon" }, icon), h("div", {}, h("strong", {}, name), h("small", {}, sub)), h("span", { class: "plan-min" }, min))
-          )
-        ),
-        h("button", { class: "btn primary big", onclick: () => startSession(lesson) }, doneToday ? "한 번 더 공부하기" : "시작하기 ▶")
-      ),
-      h(
-        "section",
-        { class: "card" },
-        h("h2", {}, "나의 작문 단계"),
-        h("div", { class: "levels" }, [1, 2, 3, 4].map((lv) => {
-          const cur = lesson ? lesson.level : 4;
-          return h("div", { class: "level" + (lv === cur ? " current" : lv < cur ? " passed" : "") }, h("b", {}, `Lv.${lv}`), h("span", {}, LEVEL_NAMES[lv]));
-        })),
-        h("p", { class: "muted small" }, `완료한 레슨 ${done} / ${LESSONS.length} · 작문 ${state.journal.length}편`)
+          "button",
+          { class: "btn primary big cta", onclick: () => startSession(lesson) },
+          doneToday ? "한 번 더 연습하기" : "10분 연습 시작"
+        )
       )
     );
   }
@@ -338,6 +376,7 @@
           "div",
           { class: "card flash" },
           h("p", { class: "muted small" }, `${i + 1} / ${cards.length} · 영어로 말해 보세요`),
+          sceneFor(c.id),
           h("p", { class: "ko big-ko" }, c.ko),
           reveal,
           answer
@@ -363,31 +402,40 @@
     );
   }
 
-  // 2) 핵심 표현
+  // 2) 핵심 표현: 한 화면에 한 문장씩
   function stepLearn() {
     const l = session.lesson;
+    const items = l.expressions.map((e, i) => ({ id: `${l.id}-e${i}`, ...e }));
+    const result = h("p", { class: "shadow-result" });
+    const tip = h("p", { class: "tip", hidden: true });
+    const tipBtn = h("button", { class: "listen ghost", onclick: () => (tip.hidden = !tip.hidden) }, "💡 팁");
+    const listen = h("button", { class: "listen", onclick: () => speak(items[v.index].en) }, "🔊 듣기");
+    const mic = h("span", { class: "mic-slot" });
+    const nextBtn = h("button", { class: "btn primary big cta", onclick: () => (v.index < items.length - 1 ? v.go(v.index + 1) : nextStep()) });
+    const v = carousel(items, {
+      render: (it) => sentenceCard(it),
+      onChange: (i) => {
+        tip.textContent = items[i].tip;
+        tip.hidden = true;
+        result.textContent = "";
+        mic.replaceChildren(...[shadowBtn(items[i].en, result)].filter(Boolean));
+        nextBtn.textContent = i < items.length - 1 ? "다음 문장 →" : "다음: 대화 듣기 →";
+        speak(items[i].en);
+      }
+    });
     mount(
       stepHeader(),
       h(
-        "section",
-        { class: "card" },
-        h("p", { class: "eyebrow" }, "오늘의 패턴"),
-        h("p", { class: "pattern" }, l.pattern.en),
-        h("p", { class: "muted" }, l.pattern.ko)
-      ),
-      l.expressions.map((e, i) => {
-        const result = h("p", { class: "shadow-result" });
-        return h(
-          "section",
-          { class: "card expr" },
-          h("div", { class: "row" }, h("span", { class: "num" }, i + 1), h("p", { class: "en" }, e.en), speakBtn(e.en), shadowBtn(e.en, result)),
-          h("p", { class: "ko" }, e.ko),
-          h("p", { class: "tip" }, "💡 ", e.tip),
-          result
-        );
-      }),
-      h("p", { class: "muted small center" }, Recognition ? "🔊 듣고 🎤 눌러 따라 말해 보세요. 3번씩 소리 내어 읽으면 효과가 커요." : "🔊 듣고 소리 내어 3번씩 따라 읽어 보세요."),
-      h("button", { class: "btn primary big", onclick: nextStep }, "다음: 대화 듣기 →")
+        "div",
+        { class: "today" },
+        h("p", { class: "today-label" }, `오늘의 패턴 · ${l.pattern.en}`),
+        v.stage,
+        h("div", { class: "today-actions" }, listen, mic, tipBtn),
+        tip,
+        result,
+        v.pager,
+        nextBtn
+      )
     );
   }
 

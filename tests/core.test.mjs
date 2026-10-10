@@ -6,10 +6,10 @@ import vm from "node:vm";
 
 const ctx = {};
 vm.createContext(ctx);
-for (const f of ["js/lessons.js", "js/core.js"]) {
+for (const f of ["js/lessons.js", "js/scenes.js", "js/core.js"]) {
   vm.runInContext(readFileSync(new URL(`../${f}`, import.meta.url), "utf8"), ctx);
 }
-const { Core, LESSONS, FREE_PROMPTS } = ctx;
+const { Core, LESSONS, FREE_PROMPTS, SCENES } = ctx;
 
 test("레슨 데이터 형식", () => {
   const ids = new Set();
@@ -88,4 +88,12 @@ test("문장 조립 비교와 섞기", () => {
 test("말하기 유사도", () => {
   assert.equal(Core.similarity("Could you say that again?", "could you say that again"), 1);
   assert.ok(Core.similarity("Could you say that again?", "could you say again") < 1);
+});
+
+test("모든 문장에 그림 장면이 있음", () => {
+  for (const l of LESSONS) {
+    assert.ok(SCENES.hue[l.id] != null, `Day ${l.id} 색상 없음`);
+    const ids = [...l.expressions.map((_, i) => `${l.id}-e${i}`), ...l.drills.map((_, i) => `${l.id}-d${i}`)];
+    for (const id of ids) assert.ok(SCENES.cards[id] && SCENES.cards[id].length >= 1, `${id} 그림 없음`);
+  }
 });
