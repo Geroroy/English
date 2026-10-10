@@ -119,8 +119,9 @@
   }
 
   // ---------- 음성 ----------
-  // 1순위: 미리 녹음한 Kokoro 신경망 음성(audio/*.mp3). 2순위: 브라우저 음성 중 가장 자연스러운 것.
-  const VOICES = { main: "af_heart", A: "am_michael", B: "af_heart" };
+  // 1순위: 미리 녹음한 음성(audio/*.mp3, OpenAI 감정 연기 또는 Kokoro). 2순위: 브라우저 음성 중 가장 자연스러운 것.
+  // 녹음에 쓴 목소리 이름 (js/audio.js가 알려 줌. 없으면 Kokoro 기본값)
+  const VOICES = globalThis.AUDIO_VOICES || { main: "af_heart", A: "am_michael", B: "af_heart" };
   const synth = window.speechSynthesis;
   let voice = null;
   let currentAudio = null;
