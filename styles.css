@@ -392,3 +392,11 @@ input[type="range"] { flex: 1; min-width: 100px; accent-color: var(--brass); }
   .sentence, .still::after { animation: none !important; }
   .timer.warn.tick, .timer.critical, .timer.critical.tick { animation: none !important; }
 }
+
+/* 원어민 표현 표시 */
+.native-mark {
+  position: absolute; top: 10px; left: 10px; z-index: 3;
+  border: 1px solid #c2a26b; color: #e3c78f; background: rgba(11, 15, 23, 0.6);
+  font-family: var(--font-mono); font-size: 0.62rem; letter-spacing: 0.14em; text-transform: uppercase;
+  padding: 3px 8px; border-radius: 2px;
+}

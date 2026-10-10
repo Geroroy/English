@@ -53,14 +53,23 @@
     return daysBetween(state.lastStudy, today) <= 1 ? state.streak : 0;
   }
 
+  function sentenceId(lesson, i) {
+    return `${lesson.id}-s${i}`;
+  }
+
+  // 문장 만들기에 쓸 오늘 문장 3개: 원어민 표현을 하나 넣고, 섞을 수 있게 3단어 이상인 문장만
+  const DRILL_ORDER = [2, 7, 8, 3, 5, 6, 4, 1, 0, 9];
+  function drillSentences(lesson) {
+    return DRILL_ORDER.map((k) => lesson.sentences[k])
+      .filter((x) => x && tokenize(x.en).length >= 3)
+      .slice(0, 3);
+  }
+
   function addCards(state, lesson, today) {
-    const items = [
-      ...lesson.expressions.map((e, i) => [`${lesson.id}-e${i}`, e]),
-      ...lesson.drills.map((d, i) => [`${lesson.id}-d${i}`, d])
-    ];
-    for (const [id] of items) {
+    lesson.sentences.forEach((_, i) => {
+      const id = sentenceId(lesson, i);
       if (!state.cards[id]) state.cards[id] = { due: addDays(today, 1), step: 0 };
-    }
+    });
     return state;
   }
 
@@ -75,13 +84,11 @@
   }
 
   function lookupCard(lessons, id) {
-    const m = /^(\d+)-([ed])(\d+)$/.exec(id);
-    if (!m) return null;
+    const m = /^(\d+)-s(\d+)$/.exec(id);
+    if (!m) return null; // 예전 형식 카드는 건너뜀
     const lesson = lessons.find((l) => l.id === Number(m[1]));
-    if (!lesson) return null;
-    const list = m[2] === "e" ? lesson.expressions : lesson.drills;
-    const item = list[Number(m[3])];
-    return item ? { id, lessonId: lesson.id, en: item.en, ko: item.ko } : null;
+    const item = lesson && lesson.sentences[Number(m[2])];
+    return item ? { ...item, id, lessonId: lesson.id } : null;
   }
 
   function dueCards(state, lessons, today, limit = Infinity) {
@@ -196,6 +203,8 @@
     defaultState,
     markStudied,
     currentStreak,
+    sentenceId,
+    drillSentences,
     addCards,
     gradeCard,
     lookupCard,

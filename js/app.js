@@ -1,5 +1,7 @@
 (function () {
-  const { Core, LESSONS, FREE_PROMPTS, SCENES } = globalThis;
+  const { Core, LESSONS, FREE_PROMPTS } = globalThis;
+  const SCENES = globalThis.SCENES || { photos: {} };
+  const AUDIO = globalThis.AUDIO || {};
   const STORAGE_KEY = "ten-min-english-v1";
   const SESSION_SECONDS = 10 * 60;
   const REVIEW_LIMIT = 6;
@@ -117,38 +119,69 @@
   }
 
   // ---------- 음성 ----------
+  // 1순위: 미리 녹음한 Kokoro 신경망 음성(audio/*.mp3). 2순위: 브라우저 음성 중 가장 자연스러운 것.
+  const VOICES = { main: "af_heart", A: "am_michael", B: "af_heart" };
   const synth = window.speechSynthesis;
   let voice = null;
+  let currentAudio = null;
   function pickVoice() {
     if (!synth) return;
     const voices = synth.getVoices().filter((v) => /^en[-_]/i.test(v.lang));
-    voice =
-      voices.find((v) => /en[-_]US/i.test(v.lang) && /Google|Samantha|Natural/i.test(v.name)) ||
-      voices.find((v) => /en[-_]US/i.test(v.lang)) ||
-      voices[0] ||
-      null;
+    const score = (v) =>
+      (/natural|neural|online/i.test(v.name) ? 8 : 0) +
+      (/enhanced|premium/i.test(v.name) ? 6 : 0) +
+      (/google us english|samantha|ava|aria|jenny/i.test(v.name) ? 4 : 0) +
+      (/en[-_]US/i.test(v.lang) ? 2 : 0);
+    voice = voices.sort((a, b) => score(b) - score(a))[0] || null;
   }
   if (synth) {
     pickVoice();
     synth.onvoiceschanged = pickVoice;
   }
-  function speak(text, rate) {
+  function clipFor(text, who) {
+    const file = AUDIO[`${VOICES[who] || VOICES.main}|${text}`];
+    return file ? `audio/${file}` : null;
+  }
+  function stopSpeaking() {
+    if (currentAudio) currentAudio.pause();
+    currentAudio = null;
+    if (synth) synth.cancel();
+  }
+  function speakWithBrowser(text) {
     if (!synth) return Promise.resolve();
-    synth.cancel();
     return new Promise((resolve) => {
       const u = new SpeechSynthesisUtterance(text);
       u.lang = "en-US";
       if (voice) u.voice = voice;
-      u.rate = rate || state.settings.rate;
+      u.rate = state.settings.rate;
       u.onend = u.onerror = resolve;
       synth.speak(u);
     });
   }
-  function speakBtn(text) {
+  function speak(text, who) {
+    stopSpeaking();
+    const src = clipFor(text, who);
+    if (!src) return speakWithBrowser(text);
+    return new Promise((resolve) => {
+      const a = new Audio(src);
+      currentAudio = a;
+      a.playbackRate = state.settings.rate / 0.9; // 기본 속도 0.9 = 녹음 원래 속도
+      const fallback = () => {
+        if (currentAudio !== a) return resolve();
+        currentAudio = null;
+        speakWithBrowser(text).then(resolve);
+      };
+      a.onended = () => resolve();
+      a.onpause = () => currentAudio !== a && resolve();
+      a.onerror = fallback;
+      a.play().catch(fallback);
+    });
+  }
+  function speakBtn(text, who) {
     const btn = h("button", { class: "icon-btn", title: "듣기", "aria-label": "듣기" }, icon("speaker"));
     btn.onclick = async () => {
       btn.classList.add("playing");
-      await speak(text);
+      await speak(text, who);
       btn.classList.remove("playing");
     };
     return btn;
@@ -264,25 +297,34 @@
   }
 
   // ---------- 문장 카드 (그림 + 영어 + 한국어) ----------
-  // 영화 스틸 한 장: 사진이 있으면 사진, 없으면 사진 자리 표시
-  function sceneFor(id) {
-    const [lessonPart, cardPart = ""] = String(id).split("-");
-    const lesson = LESSONS.find((l) => l.id === Number(lessonPart));
-    const photo = SCENES.photos && SCENES.photos[id];
-    const take = /^e\d+$/.test(cardPart) ? `Take ${Number(cardPart.slice(1)) + 1}` : "Review";
+  // 영화 스틸 한 장: 문장 사진이 있으면 사진, 없으면 사진 자리 표시
+  function sceneFor(item) {
+    const lesson = LESSONS.find((l) => l.id === item.lessonId);
+    const photo = SCENES.photos[item.id];
+    const no = Number(String(item.id).split("-s")[1]);
     return h(
       "figure",
-      { class: "still", role: "img", "aria-label": lesson ? `${lesson.title} 장면` : "장면" },
-      photo ? h("img", { src: photo, alt: "", loading: "lazy" }) : h("div", { class: "still-empty" }, icon("camera"), h("span", {}, "사진 준비 중")),
-      h("figcaption", { class: "slate" }, h("span", {}, `Sc. ${String(lessonPart).padStart(2, "0")}${lesson ? " · " + lesson.title : ""}`), h("span", {}, take))
+      { class: "still", role: "img", "aria-label": item.scene || (lesson ? lesson.title : "장면") },
+      photo ? h("img", { src: photo.src, alt: "", loading: "lazy", decoding: "async" }) : h("div", { class: "still-empty" }, icon("camera"), h("span", {}, "사진 준비 중")),
+      item.native ? h("span", { class: "native-mark" }, "Native · 교과서 밖 표현") : null,
+      h(
+        "figcaption",
+        { class: "slate" },
+        h("span", {}, `Sc. ${String(item.lessonId).padStart(2, "0")} · ${item.scene || (lesson ? lesson.title : "")}`),
+        h("span", {}, photo && photo.credit ? `Photo · ${photo.credit}` : `Take ${String(no + 1).padStart(2, "0")}`)
+      )
     );
+  }
+
+  function lessonItems(lesson) {
+    return lesson.sentences.map((x, i) => ({ ...x, id: Core.sentenceId(lesson, i), lessonId: lesson.id }));
   }
 
   function sentenceCard(item, { hideEn = false } = {}) {
     return h(
       "article",
       { class: "sentence" },
-      sceneFor(item.id),
+      sceneFor(item),
       h(
         "div",
         { class: "subtitle" },
@@ -293,13 +335,11 @@
     );
   }
 
-  // 레슨을 다 마친 뒤 홈에 띄울 오늘의 복습 문장 3개 (날짜마다 바뀜)
+  // 레슨을 다 마친 뒤 홈에 띄울 오늘의 복습 문장 10개 (날짜마다 바뀜)
   function reviewSentencesForToday() {
-    const pool = LESSONS.filter((l) => state.completed.includes(l.id)).flatMap((l) =>
-      l.expressions.map((e, i) => ({ id: `${l.id}-e${i}`, en: e.en, ko: e.ko }))
-    );
-    const start = (Core.daysBetween("2024-01-01", today()) * 3) % pool.length;
-    return [0, 1, 2].map((k) => pool[(start + k) % pool.length]);
+    const pool = LESSONS.filter((l) => state.completed.includes(l.id)).flatMap(lessonItems);
+    const start = (Core.daysBetween("2024-01-01", today()) * 10) % pool.length;
+    return Array.from({ length: Math.min(10, pool.length) }, (_, k) => pool[(start + k) % pool.length]);
   }
 
   // 카드 여러 장을 한 장씩 넘겨 보는 뷰어 (스와이프, 점, 화살표)
@@ -336,9 +376,7 @@
   function renderHome() {
     const lesson = Core.nextLesson(state, LESSONS);
     const doneToday = state.lastStudy === today();
-    const items = lesson
-      ? lesson.expressions.map((e, i) => ({ id: `${lesson.id}-e${i}`, en: e.en, ko: e.ko }))
-      : reviewSentencesForToday();
+    const items = lesson ? lessonItems(lesson) : reviewSentencesForToday();
 
     const view_ = carousel(items, { render: (it) => sentenceCard(it) });
 
@@ -377,7 +415,7 @@
     if (!session) return;
     session = null;
     stopTimer();
-    if (synth) synth.cancel();
+    stopSpeaking();
   }
 
   function nextStep() {
@@ -441,7 +479,7 @@
           "div",
           { class: "card flash" },
           h("p", { class: "counter" }, `${String(i + 1).padStart(2, "0")} / ${String(cards.length).padStart(2, "0")} · 영어로 말해 보세요`),
-          sceneFor(c.id),
+          sceneFor(c),
           h("p", { class: "ko big-ko" }, c.ko),
           reveal,
           answer
@@ -469,7 +507,7 @@
   // 2) 핵심 표현: 한 화면에 한 문장씩
   function stepLearn() {
     const l = session.lesson;
-    const items = l.expressions.map((e, i) => ({ id: `${l.id}-e${i}`, ...e }));
+    const items = lessonItems(l);
     const result = h("p", { class: "shadow-result" });
     const tip = h("p", { class: "tip", hidden: true });
     const tipBtn = h("button", { class: "ghost-btn", "aria-expanded": "false" }, icon("note"), "표현 노트");
@@ -483,9 +521,11 @@
     const v = carousel(items, {
       render: (it) => sentenceCard(it),
       onChange: (i) => {
-        tip.textContent = items[i].tip;
-        tip.hidden = true;
-        tipBtn.setAttribute("aria-expanded", "false");
+        const it = items[i];
+        tip.textContent = it.note || it.tip || "";
+        tip.hidden = !it.native; // 원어민 표현은 설명을 바로 펼쳐 둔다
+        tipBtn.hidden = !tip.textContent;
+        tipBtn.setAttribute("aria-expanded", String(!tip.hidden));
         result.textContent = "";
         mic.replaceChildren(...[shadowBtn(items[i].en, result)].filter(Boolean));
         nextLabel.textContent = i < items.length - 1 ? "다음 문장" : "다음: 대화 듣기";
@@ -517,7 +557,7 @@
         "div",
         { class: "line" },
         h("p", { class: "who" }, d.s === "A" ? "A" : "B — YOU"),
-        h("p", { class: "en" }, h("span", {}, d.en), speakBtn(d.en)),
+        h("p", { class: "en" }, h("span", {}, d.en), speakBtn(d.en, d.s)),
         h("p", { class: "ko", hidden: true }, d.ko)
       )
     );
@@ -544,7 +584,7 @@
             if (!session) return;
             lines.forEach((el) => el.classList.remove("playing"));
             lines[i].classList.add("playing");
-            await speak(d.en);
+            await speak(d.en, d.s);
           }
           lines.forEach((el) => el.classList.remove("playing"));
           script.classList.remove("playing");
@@ -564,7 +604,7 @@
 
   // 4) 문장 조립 드릴
   function stepDrill() {
-    const drills = session.lesson.drills;
+    const drills = Core.drillSentences(session.lesson);
     let i = 0;
     const box = h("div");
     function show() {
@@ -781,7 +821,7 @@
         h("p", { class: "fin-word" }, "Fin."),
         h("h1", {}, "오늘의 10분 완료"),
         h("p", {}, `${mins}분 동안 집중했어요. 연속 ${Core.currentStreak(state, today())}일째!`),
-        l ? h("p", { class: "muted" }, `오늘 배운 표현 ${l.expressions.length + l.drills.length}개는 내일부터 복습 카드로 다시 나와요.`) : null,
+        l ? h("p", { class: "muted" }, `오늘 배운 문장 ${l.sentences.length}개는 내일부터 복습 카드로 다시 나와요.`) : null,
         next && l && next.level > l.level ? h("p", { class: "badge" }, `다음 레슨부터 작문 Lv.${next.level} · ${LEVEL_NAMES[next.level]}`) : null,
         h("div", { class: "row gap center" }, h("button", { class: "btn", onclick: () => route("journal") }, "작문노트 보기"), h("button", { class: "btn primary", onclick: () => route("home") }, "홈으로"))
       )
@@ -815,7 +855,7 @@
       { class: "card" },
       h("h3", {}, "배운 표현 모아 보기"),
       learned.map((l) =>
-        h("details", {}, h("summary", {}, `Day ${l.id}. ${l.title}`), [...l.expressions, ...l.drills].map((e) => h("div", { class: "mini" }, h("p", { class: "en" }, h("span", {}, e.en), speakBtn(e.en)), h("p", { class: "ko" }, e.ko))))
+        h("details", {}, h("summary", {}, `Day ${l.id}. ${l.title}`), l.sentences.map((e) => h("div", { class: "mini" }, h("p", { class: "en" }, h("span", {}, e.en), speakBtn(e.en)), h("p", { class: "ko" }, e.ko))))
       )
     );
   }

@@ -6,10 +6,10 @@ import vm from "node:vm";
 
 const ctx = {};
 vm.createContext(ctx);
-for (const f of ["js/lessons.js", "js/scenes.js", "js/core.js"]) {
+for (const f of ["js/lessons.js", "js/core.js"]) {
   vm.runInContext(readFileSync(new URL(`../${f}`, import.meta.url), "utf8"), ctx);
 }
-const { Core, LESSONS, FREE_PROMPTS, SCENES } = ctx;
+const { Core, LESSONS, FREE_PROMPTS } = ctx;
 
 test("레슨 데이터 형식", () => {
   const ids = new Set();
@@ -17,10 +17,15 @@ test("레슨 데이터 형식", () => {
     assert.ok(!ids.has(l.id), `중복 id ${l.id}`);
     ids.add(l.id);
     assert.ok([1, 2, 3].includes(l.level));
-    assert.equal(l.expressions.length, 3);
+    assert.equal(l.sentences.length, 10, `Day ${l.id}는 10문장`);
+    const natives = l.sentences.filter((s) => s.native);
+    assert.ok(natives.length >= 1 && natives.length <= 2, `Day ${l.id} 원어민 표현 1~2개`);
+    for (const n of natives) assert.ok(n.note, `${n.en} 설명 없음`);
+    for (const s of l.sentences) assert.ok(s.en && s.ko && s.scene, JSON.stringify(s));
     assert.ok(l.dialogue.length >= 3);
-    assert.equal(l.drills.length, 3);
-    for (const d of l.drills) assert.ok(Core.tokenize(d.en).length >= 2, d.en);
+    const drills = Core.drillSentences(l);
+    assert.equal(drills.length, 3, `Day ${l.id} 문장 만들기 3개`);
+    assert.ok(drills.some((d) => d.native), `Day ${l.id} 문장 만들기에 원어민 표현 포함`);
     assert.ok(l.writing.samples.length >= 1);
   }
   assert.ok(FREE_PROMPTS.length > 0);
@@ -62,11 +67,11 @@ test("연속 학습일", () => {
 test("간격 반복 카드", () => {
   const s = Core.defaultState();
   Core.addCards(s, LESSONS[0], "2026-10-01");
-  assert.equal(Object.keys(s.cards).length, 6);
+  assert.equal(Object.keys(s.cards).length, 10);
   assert.equal(Core.dueCards(s, LESSONS, "2026-10-01").length, 0);
   const due = Core.dueCards(s, LESSONS, "2026-10-02");
-  assert.equal(due.length, 6);
-  assert.equal(due[0].en, LESSONS[0].expressions[0].en);
+  assert.equal(due.length, 10);
+  assert.equal(due[0].en, LESSONS[0].sentences[0].en);
   let c = Core.gradeCard(s.cards[due[0].id], "good", "2026-10-02");
   assert.deepEqual({ ...c }, { step: 1, due: "2026-10-05" });
   c = Core.gradeCard(c, "again", "2026-10-05");
@@ -90,10 +95,3 @@ test("말하기 유사도", () => {
   assert.ok(Core.similarity("Could you say that again?", "could you say again") < 1);
 });
 
-test("모든 문장에 그림 장면이 있음", () => {
-  for (const l of LESSONS) {
-    assert.ok(SCENES.hue[l.id] != null, `Day ${l.id} 색상 없음`);
-    const ids = [...l.expressions.map((_, i) => `${l.id}-e${i}`), ...l.drills.map((_, i) => `${l.id}-d${i}`)];
-    for (const id of ids) assert.ok(SCENES.cards[id] && SCENES.cards[id].length >= 1, `${id} 그림 없음`);
-  }
-});
