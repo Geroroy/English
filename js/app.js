@@ -48,9 +48,41 @@
     return el;
   }
   function mount(...nodes) {
-    view.replaceChildren(...nodes);
+    view.replaceChildren(...nodes.flat(Infinity).filter((n) => n != null && n !== false));
     window.scrollTo(0, 0);
   }
+  // 화면 안 확인 창 (임베드 환경에서는 confirm/alert가 막혀 있음)
+  function ask(message, okLabel = "확인", danger = false) {
+    return new Promise((resolve) => {
+      const close = (v) => {
+        overlay.remove();
+        resolve(v);
+      };
+      const overlay = h(
+        "div",
+        { class: "overlay", onclick: (e) => e.target === overlay && close(false) },
+        h(
+          "div",
+          { class: "dialog", role: "dialog", "aria-modal": "true" },
+          h("p", {}, message),
+          h(
+            "div",
+            { class: "row gap end" },
+            h("button", { class: "btn", onclick: () => close(false) }, "취소"),
+            h("button", { class: "btn primary" + (danger ? " danger" : ""), onclick: () => close(true) }, okLabel)
+          )
+        )
+      );
+      document.body.append(overlay);
+      overlay.querySelector(".btn.primary").focus();
+    });
+  }
+  function toast(message) {
+    const el = h("div", { class: "toast", role: "status" }, message);
+    document.body.append(el);
+    setTimeout(() => el.remove(), 2200);
+  }
+
   function renderStreak() {
     streakEl.textContent = `🔥 ${Core.currentStreak(state, today())}`;
   }
@@ -152,8 +184,8 @@
     tabs.forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
   }
   tabs.forEach((b) =>
-    b.addEventListener("click", () => {
-      if (session && !confirm("학습을 중단할까요? 진행 중인 내용은 저장되지 않아요.")) return;
+    b.addEventListener("click", async () => {
+      if (session && !(await ask("학습을 중단할까요? 진행 중인 내용은 저장되지 않아요.", "중단하기", true))) return;
       endSession();
       route(b.dataset.tab);
     })
@@ -526,9 +558,9 @@
       "button",
       {
         class: "btn primary big",
-        onclick: () => {
+        onclick: async () => {
           const r = renderChecks();
-          if (!r.passed && !confirm("아직 체크리스트를 모두 채우지 못했어요. 그래도 제출할까요?")) return;
+          if (!r.passed && !(await ask("아직 체크리스트를 모두 채우지 못했어요. 그래도 제출할까요?", "제출하기"))) return;
           submit.hidden = true;
           ta.readOnly = true;
           showFeedback(task, ta.value, after);
@@ -566,6 +598,7 @@
     const revise = h("textarea", { rows: task.level >= 3 ? 8 : 4 });
     revise.value = text;
     container.replaceChildren(
+      ...[
       task.samples.length
         ? h("section", { class: "card sample" }, h("p", { class: "eyebrow" }, "예시 답안"), task.samples.map((s) => h("p", { class: "en" }, s, " ", speakBtn(s))))
         : null,
@@ -583,12 +616,13 @@
         revise
       ),
       h("button", { class: "btn primary big", onclick: () => saveWriting(task, text, revise.value) }, "작문노트에 저장하고 마치기 ✓")
+      ].filter(Boolean)
     );
     container.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   function saveWriting(task, first, final) {
-    if (!final.trim()) return alert("내용을 입력해 주세요.");
+    if (!final.trim()) return toast("내용을 입력해 주세요.");
     state.journal.unshift({
       date: today(),
       lessonId: session.lesson ? session.lesson.id : null,
@@ -681,7 +715,7 @@
         h(
           "article",
           { class: "card entry" },
-          h("div", { class: "row between" }, h("span", { class: "muted small" }, `${j.date} · Lv.${j.level}`), h("button", { class: "link danger", onclick: () => { if (confirm("이 글을 삭제할까요?")) { state.journal.splice(idx, 1); save(); renderJournal(); } } }, "삭제")),
+          h("div", { class: "row between" }, h("span", { class: "muted small" }, `${j.date} · Lv.${j.level}`), h("button", { class: "link danger", onclick: async () => { if (await ask("이 글을 삭제할까요?", "삭제", true)) { state.journal.splice(idx, 1); save(); renderJournal(); } } }, "삭제")),
           h("p", { class: "muted small" }, j.prompt),
           h("p", { class: "en entry-text" }, j.text, " ", speakBtn(j.text)),
           j.first && j.first !== j.text ? h("details", {}, h("summary", { class: "small" }, "고치기 전 글 보기"), h("p", { class: "muted" }, j.first)) : null
@@ -692,8 +726,18 @@
 
   function exportJournal() {
     const text = state.journal.map((j) => `[${j.date}] ${j.prompt}\n${j.text}`).join("\n\n");
-    if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => alert("작문노트를 복사했어요."), () => prompt("복사해서 사용하세요:", text));
-    else prompt("복사해서 사용하세요:", text);
+    const fallback = () => {
+      const ta = h("textarea", { rows: 8, readonly: true });
+      ta.value = text;
+      view.prepend(h("section", { class: "card" }, h("p", { class: "muted small" }, "자동 복사가 막혀 있어요. 아래 글을 길게 눌러 복사하세요."), ta));
+      ta.focus();
+      ta.select();
+    };
+    try {
+      navigator.clipboard.writeText(text).then(() => toast("작문노트를 복사했어요."), fallback);
+    } catch (e) {
+      fallback();
+    }
   }
 
   // ---------- 진도 ----------
@@ -749,8 +793,8 @@
           "button",
           {
             class: "link danger",
-            onclick: () => {
-              if (confirm("모든 학습 기록을 지울까요? 되돌릴 수 없어요.")) {
+            onclick: async () => {
+              if (await ask("모든 학습 기록을 지울까요? 되돌릴 수 없어요.", "모두 지우기", true)) {
                 state = Core.defaultState();
                 save();
                 route("home");
