@@ -95,3 +95,11 @@ test("말하기 유사도", () => {
   assert.ok(Core.similarity("Could you say that again?", "could you say again") < 1);
 });
 
+
+test("대사 감정 추정", () => {
+  assert.equal(Core.toneOf("I'm so stoked!").name, "excited");
+  assert.equal(Core.toneOf("Sorry to bother you.").name, "sorry");
+  assert.equal(Core.toneOf("Are you free this Friday?").name, "question");
+  assert.equal(Core.toneOf("I usually get up at seven.").name, "calm");
+  assert.equal(Core.toneOf("I’m worried about the exam!").name, "sorry");
+});

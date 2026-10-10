@@ -158,6 +158,25 @@
   }
 
   // 말하기 연습용 유사도 (0~1): 목표 문장의 단어 중 몇 개를 맞혔는지
+  // 대사 감정 추정 (규칙 기반): 어떤 문장이든 말투(빠르기·음높이)를 정한다.
+  // speed: 말 빠르기 배수, pitch: 반음 단위 음높이 변화
+  const TONES = {
+    excited: { speed: 1.08, pitch: 1.2 },
+    sorry: { speed: 0.88, pitch: -0.8 },
+    question: { speed: 1.0, pitch: 0.4 },
+    calm: { speed: 0.95, pitch: 0 }
+  };
+  const SORRY_WORDS = /\b(sorry|worried|nervous|afraid|unfortunately|problem|sick|tired|bad|butterflies|bother|late|lonely|died|broken|stress(ed)?|headache|miss(ed)?)\b/i;
+  const EXCITED_WORDS = /\b(stoked|excited|awesome|amazing|great|nice|love|blast|fun|can't wait|congrat\w*|wow|perfect|best)\b/i;
+  function toneOf(text) {
+    const t = normalizeText(text);
+    let name = "calm";
+    if (SORRY_WORDS.test(t)) name = "sorry";
+    else if (/!/.test(t) || EXCITED_WORDS.test(t)) name = "excited";
+    else if (/\?$/.test(t)) name = "question";
+    return { name, ...TONES[name] };
+  }
+
   function similarity(target, said) {
     const t = words(target);
     const s = words(said);
@@ -215,6 +234,7 @@
     countSentences,
     checkWriting,
     similarity,
+    toneOf,
     tokenize,
     sameSentence,
     shuffled

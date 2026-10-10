@@ -9,7 +9,9 @@
 //
 // 실행:
 //   node tools/generate-audio.mjs --kokoro <kokoro-js 폴더> --shards <shards 폴더> \
-//     --tokenizer <tokenizer.json> --modules <node_modules 상위 폴더> [--only 1,2]
+//     --tokenizer <tokenizer.json> --modules <node_modules 상위 폴더> [--only 1,2] [--force 1]
+//
+// 대사마다 Core.toneOf(규칙 기반 감정 추정)로 말 빠르기와 음높이를 정한다. --force 를 주면 이미 있는 파일도 다시 만든다.
 //
 // 결과: audio/*.mp3 와 js/audio.js(문장 → 파일 이름 목록). 이미 있는 파일은 건너뛴다.
 import { createHash } from "node:crypto";
@@ -63,7 +65,7 @@ function voice(name) {
   return voices[name];
 }
 
-async function synth(text, voiceName) {
+async function synth(text, voiceName, speed) {
   const phonemes = await phonemizeText(text, "a");
   const ids = [...phonemes].map((c) => vocab[c]).filter((x) => x !== undefined);
   const tokens = [0, ...ids, 0];
@@ -72,7 +74,7 @@ async function synth(text, voiceName) {
   const feeds = {
     input_ids: new ort.Tensor("int64", BigInt64Array.from(tokens.map(BigInt)), [1, tokens.length]),
     style: new ort.Tensor("float32", v.slice(ref, ref + 256), [1, 256]),
-    speed: new ort.Tensor("float32", [SPEED], [1])
+    speed: new ort.Tensor("float32", [speed], [1])
   };
   const out = await session.run(feeds);
   return { audio: out.waveform.data, phonemes };
@@ -92,6 +94,8 @@ function wav(samples, rate = 24000) {
 const ctx = {};
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync(path.join(ROOT, "js/lessons.js"), "utf8"), ctx);
+vm.runInContext(fs.readFileSync(path.join(ROOT, "js/core.js"), "utf8"), ctx);
+const force = "force" in args;
 const only = args.only ? new Set(args.only.split(",").map(Number)) : null;
 const jobs = [];
 for (const l of ctx.LESSONS) {
@@ -121,11 +125,15 @@ for (const [text, voiceName] of jobs) {
   const file = clipName(text, voiceName);
   const key = `${voiceName}|${text}`;
   const target = path.join(outDir, file);
-  if (!fs.existsSync(target)) {
-    const { audio } = await synth(text, voiceName);
+  if (force || !fs.existsSync(target)) {
+    // 대사 감정(규칙 기반)에 따라 말 빠르기와 음높이를 바꾼다
+    const tone = ctx.Core.toneOf(text);
+    const { audio } = await synth(text, voiceName, SPEED * tone.speed);
     const w = path.join(tmp, "clip.wav");
     fs.writeFileSync(w, wav(audio));
-    execFileSync("ffmpeg", ["-loglevel", "error", "-y", "-i", w, "-af", "silenceremove=start_periods=1:start_threshold=-50dB,areverse,silenceremove=start_periods=1:start_threshold=-50dB,areverse,apad=pad_dur=0.15", "-ac", "1", "-codec:a", "libmp3lame", "-b:a", "48k", target]);
+    const p = Math.pow(2, tone.pitch / 12);
+    const pitch = tone.pitch ? `asetrate=${Math.round(24000 * p)},aresample=24000,atempo=${(1 / p).toFixed(4)},` : "";
+    execFileSync("ffmpeg", ["-loglevel", "error", "-y", "-i", w, "-af", `${pitch}silenceremove=start_periods=1:start_threshold=-50dB,areverse,silenceremove=start_periods=1:start_threshold=-50dB,areverse,apad=pad_dur=0.15`, "-ac", "1", "-codec:a", "libmp3lame", "-b:a", "48k", target]);
     made++;
     if (made % 20 === 0) console.log(`${made}개 생성…`);
   }

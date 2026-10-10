@@ -153,7 +153,9 @@
       const u = new SpeechSynthesisUtterance(text);
       u.lang = "en-US";
       if (voice) u.voice = voice;
-      u.rate = state.settings.rate;
+      const tone = Core.toneOf(text); // 대사 감정에 맞춰 빠르기·음높이 조절
+      u.rate = state.settings.rate * tone.speed;
+      u.pitch = 1 + tone.pitch * 0.08;
       u.onend = u.onerror = resolve;
       synth.speak(u);
     });
