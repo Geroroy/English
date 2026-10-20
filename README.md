@@ -33,6 +33,36 @@
 문장마다 `scene`(장면 검색어)이 있고, `tools/fetch-photos.mjs`가 Unsplash에서 실사 사진을 받아 `photos/`와 `js/scenes.js`를 채웁니다.
 Unsplash 무료 API 키와 네트워크 허용(api.unsplash.com, images.unsplash.com)이 필요합니다. 사진이 없는 문장은 '사진 준비 중' 프레임이 나옵니다.
 
+## 카카오톡 알림
+
+정한 시각마다 오늘의 영어 한 문장(영어 + 한국어 뜻 + "오늘 10분 시작하기" 링크)을 **카카오톡 '나에게 보내기'**로 받을 수 있습니다.
+친구에게 보내기는 카카오 비즈니스 심사가 필요해서 쓰지 않습니다. 키는 저장소에 들어 있지 않으니 직접 발급해 넣어야 합니다.
+
+1. **앱 만들기**: [카카오 디벨로퍼스](https://developers.kakao.com) → 내 애플리케이션 → 애플리케이션 추가하기
+2. **플랫폼 등록**: 앱 설정 → 플랫폼 → Web → 사이트 도메인에 앱 주소 등록 (예: `http://localhost:8000`, `https://<아이디>.github.io`)
+3. **카카오 로그인 켜기**: 제품 설정 → 카카오 로그인 → 활성화 ON, **Redirect URI**에 앱 페이지 주소를 그대로 등록
+   (예: `http://localhost:8000/`, `https://<아이디>.github.io/English/` — 끝의 `/`까지 같아야 함)
+4. **동의항목**: 카카오 로그인 → 동의항목 → **카카오톡 메시지 전송(talk_message)** 을 '선택 동의'로 설정
+5. **키 입력**: 앱 설정 → 앱 키의 **JavaScript 키**와 **REST API 키**를 앱의 기록 탭 → '카톡 알림' 카드 → '카카오 앱 키'에 입력
+   (키와 토큰은 그 브라우저의 localStorage에만 저장됩니다) → **카카오 로그인** → '지금 테스트 보내기'로 확인
+6. **시간 설정**: 같은 카드에서 켜기 → '매일 정해진 시각'(시각 추가·삭제) 또는 'N분마다'(최소 15분, 시작·끝 시각) → 요일 선택.
+   바꾸는 즉시 저장되고, 카드에 "다음 알림: 오늘 21:00 (2시간 13분 후)"처럼 남은 시간이 보입니다.
+7. **(선택) 항상 받기**: 브라우저는 **앱이 열려 있을 때만** 보낼 수 있습니다. 앱이 닫혀 있어도 받으려면 PC나 서버에서 전송기를 켜 두세요.
+
+```bash
+# 카드의 '일정 내보내기'로 복사한 JSON을 kakao-schedule.json으로 저장한 뒤
+export KAKAO_REST_KEY=<REST API 키>
+node tools/kakao-timer.mjs --auth                 # 인가 URL 출력 → 로그인 후 돌아온 주소의 code 복사
+node tools/kakao-timer.mjs --auth --code <code>   # refresh token 발급
+export KAKAO_REFRESH_TOKEN=<refresh token>
+export APP_URL=https://<아이디>.github.io/English/ # 메시지 속 링크 (선택)
+node tools/kakao-timer.mjs --dry-run --schedule kakao-schedule.json   # 다음 시각만 확인
+node tools/kakao-timer.mjs --schedule kakao-schedule.json             # 켜 두기 (또는 --times 08:00,21:30 --days 1-5)
+```
+
+전송기는 앱과 같은 `js/core.js`로 일정을 계산합니다. 카카오 로그인에서 Client Secret을 켰다면 `KAKAO_CLIENT_SECRET`도 넣으세요(브라우저 로그인은 Client Secret을 끈 상태에서만 동작합니다).
+refresh token은 약 2달 유효하고, 만료가 가까워지면 카카오가 새 토큰을 주며 스크립트가 출력해 알려 줍니다.
+
 ## 실행
 
 ```bash
@@ -50,11 +80,12 @@ styles.css               스타일 (어두운 상영관 / 아이보리 종이 �
 js/lessons.js            커리큘럼 (레슨 20개 × 10문장, 원어민 표현 40개) + 자유 작문 주제
 js/scenes.js             문장별 장면 사진 목록
 js/audio.js              문장별 녹음 파일 목록 (자동 생성)
-js/core.js               순수 로직: 연속 학습일, 간격 반복, 문장 만들기 선택, 작문 체크
+js/core.js               순수 로직: 연속 학습일, 간격 반복, 문장 만들기 선택, 작문 체크, 카톡 알림 일정
 js/app.js                화면과 학습 흐름
 audio/                   신경망 음성 MP3
 tools/generate-audio.mjs 음성 생성기
 tools/fetch-photos.mjs   사진 받기
+tools/kakao-timer.mjs    카카오톡 학습 알림 상시 전송기
 sw.js                    오프라인 캐시
 tests/core.test.mjs      로직·데이터 테스트
 docs/design-brief.md     "오늘의 문장" 화면 디자인 브리프

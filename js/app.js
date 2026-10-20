@@ -16,7 +16,7 @@
   function load() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) return Object.assign(Core.defaultState(), JSON.parse(raw));
+      if (raw) return Core.mergeState(JSON.parse(raw)); // 새로 생긴 설정 키(카톡 알림 등)는 기본값으로 채움
     } catch (e) {
       /* 저장소 사용 불가 시 기본값 */
     }
@@ -887,7 +887,11 @@
   }
 
   function exportJournal() {
-    const text = state.journal.map((j) => `[${j.date}] ${j.prompt}\n${j.text}`).join("\n\n");
+    copyText(state.journal.map((j) => `[${j.date}] ${j.prompt}\n${j.text}`).join("\n\n"), "작문노트를 복사했어요.");
+  }
+
+  // 클립보드 복사. 막혀 있으면 화면 위에 글 상자를 띄워 직접 복사하게 한다.
+  function copyText(text, done) {
     const fallback = () => {
       const ta = h("textarea", { rows: 8, readonly: true });
       ta.value = text;
@@ -896,10 +900,439 @@
       ta.select();
     };
     try {
-      navigator.clipboard.writeText(text).then(() => toast("작문노트를 복사했어요."), fallback);
+      navigator.clipboard.writeText(text).then(() => toast(done), fallback);
     } catch (e) {
       fallback();
     }
+  }
+
+  // ---------- 카카오톡 학습 알림 ----------
+  // 카카오 API '나에게 보내기'만 쓴다(친구에게 보내기는 비즈니스 심사가 필요). 일정은 state.settings.kakao,
+  // 앱 키와 토큰은 학습 기록과 따로 이 브라우저(localStorage)에만 저장한다. SDK는 카톡 기능을 쓸 때만 불러온다.
+  const KAKAO_SDK = "https://t1.kakaocdn.net/kakao_js_sdk/2.7.4/kakao.min.js";
+  const KAKAO_AUTH_KEY = "ten-min-kakao-auth";
+  const KAKAO_CHECK_MS = 30 * 1000;
+  const DAY_NAMES = ["일", "월", "화", "수", "목", "금", "토"];
+  const appUrl = () => location.origin + location.pathname; // Redirect URI이자 메시지 속 링크
+  const kakaoSchedule = () => state.settings.kakao;
+  const hhmm = (d) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+
+  function kakaoAuth() {
+    try {
+      return JSON.parse(localStorage.getItem(KAKAO_AUTH_KEY)) || {};
+    } catch (e) {
+      return {};
+    }
+  }
+  function saveKakaoAuth(patch) {
+    const next = { ...kakaoAuth(), ...patch };
+    try {
+      localStorage.setItem(KAKAO_AUTH_KEY, JSON.stringify(next));
+    } catch (e) {
+      /* 무시 */
+    }
+    return next;
+  }
+  function kakaoConnected(a = kakaoAuth()) {
+    return Boolean(a.refresh || (a.access && a.accessExp > Date.now()));
+  }
+
+  // 카카오 오류 코드를 사용자가 고칠 수 있는 말로
+  function kakaoErrorText(e, status) {
+    const code = e && (e.code ?? e.error_code);
+    const known = {
+      KOE006: "Redirect URI가 등록되지 않았어요. 카카오 디벨로퍼스에 지금 주소를 등록해 주세요.",
+      KOE010: "REST API 키(또는 Client Secret)가 맞지 않아요.",
+      KOE101: "앱 키가 올바르지 않아요.",
+      KOE320: "로그인 코드가 만료됐어요. 다시 로그인해 주세요.",
+      invalid_grant: "로그인이 만료됐어요. 다시 로그인해 주세요.",
+      invalid_client: "REST API 키가 맞지 않아요.",
+      "-401": "로그인이 만료됐어요. 다시 로그인해 주세요.",
+      "-402": "'카카오톡 메시지 전송' 동의가 필요해요. 다시 로그인해 동의해 주세요.",
+      "-3": "카카오 앱에서 카카오톡 메시지 기능이 꺼져 있어요."
+    };
+    const key = e && (e.error_code || (e.error === "invalid_grant" || e.error === "invalid_client" ? e.error : String(code)));
+    if (known[key]) return known[key];
+    const msg = e && (e.msg || e.error_description || e.message);
+    return msg ? `카카오 오류: ${msg}` : `카카오 요청이 실패했어요${status ? ` (${status})` : ""}.`;
+  }
+
+  // SDK 지연 로드 (버전 고정). 실패하면 다음에 다시 시도할 수 있게 비워 둔다.
+  let kakaoSdk = null;
+  let kakaoSdkKey = null;
+  function loadKakaoSdk(jsKey) {
+    if (!jsKey) return Promise.reject(new Error("JavaScript 키를 먼저 입력해 주세요."));
+    if (!kakaoSdk) {
+      kakaoSdk = new Promise((resolve, reject) => {
+        if (window.Kakao) return resolve(window.Kakao);
+        const s = document.createElement("script");
+        s.src = KAKAO_SDK;
+        s.async = true;
+        s.crossOrigin = "anonymous";
+        s.onload = () => (window.Kakao ? resolve(window.Kakao) : reject(new Error("카카오 SDK를 불러오지 못했어요.")));
+        s.onerror = () => {
+          s.remove();
+          reject(new Error("카카오 SDK를 불러오지 못했어요. 인터넷 연결을 확인해 주세요."));
+        };
+        document.head.append(s);
+      }).catch((e) => {
+        kakaoSdk = null;
+        throw e;
+      });
+    }
+    return kakaoSdk.then((K) => {
+      if (K.isInitialized() && kakaoSdkKey !== jsKey) K.cleanup();
+      if (!K.isInitialized()) {
+        K.init(jsKey);
+        kakaoSdkKey = jsKey;
+      }
+      return K;
+    });
+  }
+
+  // 토큰 발급·갱신 (kauth.kakao.com/oauth/token)
+  async function kakaoToken(params) {
+    let res;
+    try {
+      res = await fetch("https://kauth.kakao.com/oauth/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded;charset=utf-8" },
+        body: new URLSearchParams(params)
+      });
+    } catch (e) {
+      throw new Error("카카오 서버에 연결하지 못했어요. 인터넷 연결을 확인해 주세요.");
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.access_token) {
+      if (data.error === "invalid_grant" && params.grant_type === "refresh_token") saveKakaoAuth({ access: null, refresh: null });
+      throw new Error(kakaoErrorText(data, res.status));
+    }
+    const now = Date.now();
+    const patch = { access: data.access_token, accessExp: now + (data.expires_in || 0) * 1000 };
+    if (data.refresh_token) Object.assign(patch, { refresh: data.refresh_token, refreshExp: now + (data.refresh_token_expires_in || 0) * 1000 });
+    return saveKakaoAuth(patch);
+  }
+
+  // 쓸 수 있는 access token. 만료 1분 전이면 refresh token으로 자동 갱신.
+  async function kakaoAccessToken() {
+    const a = kakaoAuth();
+    if (!a.jsKey || !a.restKey) throw new Error("카카오 앱 키(JavaScript 키, REST API 키)를 먼저 입력해 주세요.");
+    if (a.access && a.accessExp - Date.now() > 60 * 1000) return a.access;
+    if (!a.refresh) throw new Error("카카오 로그인이 필요해요.");
+    return (await kakaoToken({ grant_type: "refresh_token", client_id: a.restKey, refresh_token: a.refresh })).access;
+  }
+
+  // 나에게 보내기: 다음에 배울 레슨(또는 오늘 복습) 문장 하나
+  async function sendKakao(when = new Date(), retry = true) {
+    const token = await kakaoAccessToken();
+    const K = await loadKakaoSdk(kakaoAuth().jsKey);
+    K.Auth.setAccessToken(token);
+    const template = Core.kakaoMessage(Core.pickSentence(LESSONS, state, when), appUrl());
+    try {
+      await K.API.request({ url: "/v2/api/talk/memo/default/send", data: { template_object: template } });
+    } catch (e) {
+      if (retry && e && e.code === -401 && kakaoAuth().refresh) {
+        saveKakaoAuth({ access: null }); // 서버에서 끊긴 토큰: 한 번만 갱신해서 다시 시도
+        return sendKakao(when, false);
+      }
+      throw new Error(kakaoErrorText(e));
+    }
+  }
+
+  // 카드 안 상태 문구 (오류는 카드 안에서만 보여 준다)
+  let kakaoNote = null; // { text, bad }
+  let refreshKakaoCard = () => {};
+  function setKakaoNote(text, bad = false) {
+    kakaoNote = text ? { text, bad } : null;
+    refreshKakaoCard();
+  }
+
+  async function kakaoLogin() {
+    try {
+      const a = kakaoAuth();
+      if (!a.restKey) throw new Error("REST API 키도 입력해 주세요. 로그인 코드를 토큰으로 바꿀 때 필요해요.");
+      const K = await loadKakaoSdk(a.jsKey);
+      const nonce = Math.random().toString(36).slice(2);
+      saveKakaoAuth({ nonce });
+      K.Auth.authorize({ redirectUri: appUrl(), scope: "talk_message", state: nonce });
+    } catch (e) {
+      setKakaoNote(e.message, true);
+    }
+  }
+
+  // 카카오 로그인에서 돌아왔을 때 (?code=…): 주소에서 code를 지우고 토큰으로 바꾼다.
+  function handleKakaoRedirect() {
+    const q = new URLSearchParams(location.search);
+    const code = q.get("code");
+    const error = q.get("error");
+    const back = q.get("state");
+    if (!code && !error) return false;
+    for (const k of ["code", "error", "error_description", "state"]) q.delete(k);
+    history.replaceState(null, "", location.pathname + (q.toString() ? `?${q}` : "") + location.hash);
+    const a = kakaoAuth();
+    if (error) {
+      setKakaoNote(error === "access_denied" ? "카카오 로그인을 취소했어요." : kakaoErrorText({ error, error_description: q.get("error_description") }), true);
+      return true;
+    }
+    if (a.nonce && back !== a.nonce) {
+      setKakaoNote("로그인 요청이 일치하지 않아요. 다시 로그인해 주세요.", true);
+      return true;
+    }
+    setKakaoNote("카카오 연결 중…");
+    kakaoToken({ grant_type: "authorization_code", client_id: a.restKey, redirect_uri: appUrl(), code })
+      .then(() => {
+        saveKakaoAuth({ nonce: null });
+        setKakaoNote("카카오톡과 연결했어요. '지금 테스트 보내기'로 확인해 보세요.");
+        toast("카카오톡과 연결했어요.");
+      })
+      .catch((e) => setKakaoNote(e.message, true));
+    return true;
+  }
+
+  async function kakaoDisconnect() {
+    if (!(await ask("카카오 연결을 해제할까요? 다시 받으려면 로그인해야 해요.", "연결 해제", true))) return;
+    const a = kakaoAuth();
+    try {
+      // 앱 연결 끊기(동의 철회). 실패해도 이 브라우저의 토큰은 지운다.
+      if (a.access && a.accessExp > Date.now()) {
+        const K = await loadKakaoSdk(a.jsKey);
+        K.Auth.setAccessToken(a.access);
+        await K.API.request({ url: "/v1/user/unlink" });
+      }
+    } catch (e) {
+      /* 무시 */
+    }
+    saveKakaoAuth({ access: null, accessExp: null, refresh: null, refreshExp: null });
+    setKakaoNote("연결을 해제했어요.");
+  }
+
+  async function kakaoTest(btn) {
+    btn.disabled = true;
+    setKakaoNote("보내는 중…");
+    try {
+      await sendKakao(new Date());
+      setKakaoNote("테스트 메시지를 보냈어요. 카카오톡 '나와의 채팅'을 확인해 보세요.");
+      toast("카톡으로 보냈어요.");
+    } catch (e) {
+      setKakaoNote(e.message, true);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // 앱이 열려 있는 동안 30초마다(+ 다시 화면에 돌아왔을 때) 보낼 시각인지 확인
+  let kakaoBusy = false;
+  const kakaoFailedAt = {}; // 예정 시각 → 마지막 실패 시각 (실패 알림이 30초마다 쌓이지 않게 5분 뒤 재시도)
+  async function checkKakao() {
+    const s = kakaoSchedule();
+    if (kakaoBusy || !s || !s.enabled) return;
+    const due = Core.dueFire(s, new Date());
+    if (!due) return;
+    const key = due.getTime();
+    if (kakaoFailedAt[key] && Date.now() - kakaoFailedAt[key] < 5 * 60 * 1000) return;
+    kakaoBusy = true;
+    try {
+      await sendKakao(due);
+      s.lastSent = key;
+      save();
+      setKakaoNote(`${hhmm(due)} 알림을 보냈어요.`);
+      toast(`카톡 알림을 보냈어요 (${hhmm(due)})`);
+    } catch (e) {
+      kakaoFailedAt[key] = Date.now();
+      setKakaoNote(e.message, true);
+      toast(`카톡 알림을 보내지 못했어요: ${e.message}`);
+    } finally {
+      kakaoBusy = false;
+    }
+  }
+
+  function kakaoNextText() {
+    const s = kakaoSchedule();
+    if (!s.enabled) return "알림이 꺼져 있어요.";
+    const next = Core.nextFire(s, new Date());
+    return next ? `다음 알림: ${Core.describeFire(next, new Date())}` : "보낼 시각이나 요일이 없어요.";
+  }
+
+  function exportSchedule() {
+    const { mode, times, days, every, from, to } = kakaoSchedule();
+    copyText(JSON.stringify({ enabled: true, mode, times, days, every, from, to }, null, 2), "일정을 복사했어요. kakao-schedule.json으로 저장해 쓰세요.");
+  }
+
+  // 기록 탭의 "카톡 알림" 카드
+  function kakaoCard() {
+    const card = h("section", { class: "card kakao" });
+    const nextEl = h("p", { class: "kakao-next", "aria-live": "off" });
+    const body = h("div");
+    card.append(h("div", { class: "row between" }, h("h3", {}, "카톡 알림"), toggle()), nextEl, body);
+
+    function toggle() {
+      const s = kakaoSchedule();
+      const input = h("input", { type: "checkbox", role: "switch", checked: s.enabled, "aria-label": "카톡 알림 켜기" });
+      input.addEventListener("change", () => {
+        s.enabled = input.checked;
+        if (s.enabled) s.lastSent = Date.now(); // 켜기 전에 지난 시각은 보내지 않음
+        save();
+        fill();
+      });
+      return h("label", { class: "switch" }, input, h("i"));
+    }
+    const change = (fn) => () => {
+      fn();
+      save();
+      fill();
+    };
+    function timeInput(value, onchange) {
+      const el = h("input", { type: "time", value, required: true });
+      el.addEventListener("change", () => onchange(el));
+      return el;
+    }
+
+    function fill() {
+      const s = kakaoSchedule();
+      const a = kakaoAuth();
+      nextEl.textContent = kakaoNextText();
+      card.classList.toggle("off", !s.enabled);
+
+      const modes = h(
+        "div",
+        { class: "row gap seg", role: "group", "aria-label": "보내는 방식" },
+        [["daily", "매일 정해진 시각"], ["interval", "N분마다"]].map(([m, label]) =>
+          h("button", { class: "chip hint" + (s.mode === m ? " on" : ""), "aria-pressed": String(s.mode === m), onclick: change(() => (s.mode = m)) }, label)
+        )
+      );
+
+      let plan;
+      if (s.mode === "interval") {
+        const every = h("input", { type: "number", min: String(Core.MIN_EVERY), step: "5", value: String(s.every), inputmode: "numeric", "aria-label": "몇 분마다" });
+        every.addEventListener("change", change(() => (s.every = Math.max(Core.MIN_EVERY, Math.round(Number(every.value)) || 60))));
+        const setRange = (k) => (el) => (Core.validTime(el.value) ? change(() => (s[k] = el.value))() : (el.value = s[k]));
+        plan = h(
+          "div",
+          { class: "kakao-plan" },
+          h("label", { class: "row gap" }, every, "분마다"),
+          h("label", { class: "row gap" }, timeInput(s.from, setRange("from")), "부터", timeInput(s.to, setRange("to")), "까지")
+        );
+      } else {
+        const add = timeInput("", () => {});
+        plan = h(
+          "div",
+          { class: "kakao-plan" },
+          h(
+            "ul",
+            { class: "kakao-times" },
+            s.times.length ? null : h("li", { class: "muted small" }, "보낼 시각을 추가해 주세요."),
+            s.times.map((t, i) =>
+              h(
+                "li",
+                { class: "row gap" },
+                timeInput(t, (el) => (Core.validTime(el.value) ? change(() => (s.times = [...new Set(s.times.map((x, j) => (j === i ? el.value : x)))].sort()))() : (el.value = t))),
+                h("button", { class: "link danger", "aria-label": `${t} 삭제`, onclick: change(() => s.times.splice(i, 1)) }, "삭제")
+              )
+            )
+          ),
+          h(
+            "div",
+            { class: "row gap" },
+            add,
+            h(
+              "button",
+              {
+                class: "btn",
+                onclick: () => {
+                  if (!Core.validTime(add.value)) return toast("추가할 시각을 골라 주세요.");
+                  if (s.times.includes(add.value)) return toast("이미 있는 시각이에요.");
+                  change(() => (s.times = [...s.times, add.value].sort()))();
+                }
+              },
+              "시각 추가"
+            )
+          )
+        );
+      }
+
+      const days = h(
+        "div",
+        { class: "row gap days", role: "group", "aria-label": "보낼 요일" },
+        DAY_NAMES.map((name, d) =>
+          h(
+            "button",
+            {
+              class: "chip hint" + (s.days.includes(d) ? " on" : ""),
+              "aria-pressed": String(s.days.includes(d)),
+              onclick: change(() => (s.days = s.days.includes(d) ? s.days.filter((x) => x !== d) : [...s.days, d].sort()))
+            },
+            name
+          )
+        )
+      );
+
+      const keyInput = (k, label) => {
+        const el = h("input", { type: "text", value: a[k] || "", autocomplete: "off", spellcheck: "false", placeholder: label, "aria-label": label });
+        el.addEventListener("change", () => {
+          saveKakaoAuth({ [k]: el.value.trim() });
+          fill();
+        });
+        return h("label", { class: "kakao-key" }, h("span", { class: "muted small" }, label), el);
+      };
+      const hasKeys = Boolean(a.jsKey && a.restKey);
+      const connected = kakaoConnected(a);
+      const status = !hasKeys ? "앱 키를 입력해 주세요" : connected ? "연결됨" : "로그인이 필요해요";
+      const testBtn = h("button", { class: "btn", disabled: !connected }, "지금 테스트 보내기");
+      testBtn.onclick = () => kakaoTest(testBtn);
+
+      body.replaceChildren(
+        modes,
+        plan,
+        h("p", { class: "eyebrow kakao-label" }, "요일"),
+        days,
+        h("p", { class: "eyebrow kakao-label" }, "카카오 연결"),
+        h("p", { class: "small" }, h("span", { class: "dot" + (connected ? " on" : "") }), status),
+        h("details", { open: !hasKeys }, h("summary", { class: "small" }, "카카오 앱 키"), keyInput("jsKey", "JavaScript 키"), keyInput("restKey", "REST API 키"), h("p", { class: "muted small" }, "키는 이 브라우저에만 저장돼요. 발급 방법은 README의 '카카오톡 알림'을 보세요.")),
+        h(
+          "div",
+          { class: "row gap" },
+          connected
+            ? h("button", { class: "btn", onclick: kakaoDisconnect }, "연결 해제")
+            : h("button", { class: "btn primary", disabled: !hasKeys, onclick: kakaoLogin }, "카카오 로그인"),
+          testBtn
+        ),
+        kakaoNote ? h("p", { class: "small kakao-note" + (kakaoNote.bad ? " bad" : ""), role: "status" }, kakaoNote.text) : null,
+        h(
+          "p",
+          { class: "muted small" },
+          "앱이 열려 있을 때만 보내요. 항상 받으려면 PC/서버에서 ",
+          h("code", {}, "tools/kakao-timer.mjs"),
+          "를 실행하세요."
+        ),
+        h("button", { class: "btn", onclick: exportSchedule }, icon("copy"), "일정 내보내기")
+      );
+    }
+
+    // 남은 시간은 이 카드가 화면에 보일 때만 1초마다 갱신
+    let timer = null;
+    const stop = () => {
+      clearInterval(timer);
+      timer = null;
+    };
+    const run = () => {
+      stop();
+      nextEl.textContent = kakaoNextText();
+      timer = setInterval(() => {
+        if (!card.isConnected) {
+          stop();
+          if (io) io.disconnect();
+          return;
+        }
+        if (!document.hidden) nextEl.textContent = kakaoNextText();
+      }, 1000);
+    };
+    const io = "IntersectionObserver" in window ? new IntersectionObserver(([e]) => (e.isIntersecting && card.isConnected ? run() : stop())) : null;
+    if (io) io.observe(card);
+    else run();
+
+    refreshKakaoCard = () => card.isConnected && fill();
+    fill();
+    return card;
   }
 
   // ---------- 진도 ----------
@@ -957,7 +1390,9 @@
             class: "link danger",
             onclick: async () => {
               if (await ask("모든 학습 기록을 지울까요? 되돌릴 수 없어요.", "모두 지우기", true)) {
+                const kakao = state.settings.kakao; // 카톡 알림 일정은 학습 기록이 아니므로 유지
                 state = Core.defaultState();
+                state.settings.kakao = kakao;
                 save();
                 route("home");
               }
@@ -965,7 +1400,8 @@
           },
           "학습 기록 초기화"
         )
-      )
+      ),
+      kakaoCard()
     );
   }
 
@@ -973,7 +1409,12 @@
   tabs.forEach((b) => b.prepend(icon(b.dataset.icon)));
   idleTimer();
   renderStreak();
-  route("home");
+  route(handleKakaoRedirect() ? "progress" : "home"); // 카카오 로그인에서 돌아왔으면 기록 탭의 카톡 카드로
+  setInterval(checkKakao, KAKAO_CHECK_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) checkKakao();
+  });
+  checkKakao();
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   }

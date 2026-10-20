@@ -400,3 +400,34 @@ input[type="range"] { flex: 1; min-width: 100px; accent-color: var(--brass); }
   font-family: var(--font-mono); font-size: 0.62rem; letter-spacing: 0.14em; text-transform: uppercase;
   padding: 3px 8px; border-radius: 2px;
 }
+
+/* ---------- 카톡 알림 카드 ---------- */
+.kakao h3 { margin: 0; }
+.kakao-next { font-family: var(--font-mono); font-size: 0.85rem; color: var(--brass); font-variant-numeric: tabular-nums; margin: 6px 0 12px; }
+.kakao.off .kakao-next { color: var(--muted); }
+.kakao-label { margin: 16px 0 6px; }
+.kakao-plan { display: grid; gap: 10px; margin: 12px 0 4px; }
+.kakao-times { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+.kakao .days { gap: 6px; }
+.kakao .days .chip { min-width: 2.4em; }
+.kakao input[type="time"], .kakao input[type="number"], .kakao input[type="text"] {
+  font: inherit; color: var(--fg); background: var(--raise); border: 1px solid var(--line); border-radius: 2px; padding: 8px 10px; min-width: 0;
+}
+.kakao input[type="time"] { font-family: var(--font-mono); color-scheme: dark light; }
+.kakao input[type="number"] { width: 6em; font-family: var(--font-mono); }
+.kakao input:focus { outline: none; border-color: var(--brass); }
+.kakao-key { display: grid; gap: 4px; margin: 8px 0; }
+.kakao-key input { width: 100%; font-family: var(--font-mono); font-size: 0.85rem; }
+.kakao code { font-family: var(--font-mono); font-size: 0.82em; }
+.kakao .btn:disabled { opacity: 0.4; cursor: default; }
+.kakao-note { color: var(--good); }
+.kakao-note.bad { color: var(--bad); }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--line); margin-right: 8px; vertical-align: 0.05em; }
+.dot.on { background: var(--good); }
+.switch { position: relative; display: inline-block; width: 44px; height: 24px; flex: none; }
+.switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; z-index: 1; }
+.switch i { position: absolute; inset: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--raise); transition: background 0.2s, border-color 0.2s; }
+.switch i::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--muted); transition: transform 0.2s, background 0.2s; }
+.switch input:checked + i { background: var(--brass); border-color: var(--brass); }
+.switch input:checked + i::after { transform: translateX(20px); background: var(--brass-ink); }
+.switch input:focus-visible + i { outline: 1px solid var(--brass); outline-offset: 3px; }

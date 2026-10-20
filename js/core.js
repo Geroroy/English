@@ -34,8 +34,18 @@
       lastStudy: null, // 마지막 학습 날짜
       history: {}, // 날짜 -> 학습한 초
       journal: [], // 작문 기록
-      settings: { rate: 0.9 }
+      settings: { rate: 0.9, kakao: defaultKakao() }
     };
+  }
+
+  // 저장된 상태에 새로 생긴 설정 키(기본값)를 채워 넣는다. 예전 사용자의 settings에는 kakao가 없을 수 있다.
+  function mergeState(saved) {
+    const base = defaultState();
+    const out = Object.assign(base, saved || {});
+    const settings = saved && saved.settings && typeof saved.settings === "object" ? saved.settings : {};
+    out.settings = Object.assign(defaultState().settings, settings);
+    out.settings.kakao = Object.assign(defaultKakao(), settings.kakao && typeof settings.kakao === "object" ? settings.kakao : {});
+    return out;
   }
 
   // 오늘 학습을 마쳤을 때 연속 학습일 갱신
@@ -214,12 +224,133 @@
     return out;
   }
 
+  // ---------- 카카오톡 학습 알림 일정 ----------
+  // mode "daily": times(HH:MM) 시각마다 / "interval": from~to 사이에 every분마다. days: 보낼 요일(0=일).
+  // lastSent: 마지막으로 보낸 '예정 시각'(ms). 같은 예정 시각을 두 번 보내지 않는 데 쓴다.
+  const MIN_EVERY = 15;
+  function defaultKakao() {
+    return {
+      enabled: false,
+      mode: "daily",
+      times: ["08:00", "21:00"],
+      days: [0, 1, 2, 3, 4, 5, 6],
+      every: 60,
+      from: "09:00",
+      to: "22:00",
+      lastSent: null
+    };
+  }
+
+  function validTime(s) {
+    return typeof s === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(s);
+  }
+
+  function toMinutes(s) {
+    const [hh, mm] = s.split(":").map(Number);
+    return hh * 60 + mm;
+  }
+
+  // 그 날(자정 기준 date)에 시작하는 예정 시각들. interval에서 to < from이면 자정을 넘겨 다음 날 to까지.
+  function slotsOn(schedule, date) {
+    const days = Array.isArray(schedule.days) ? schedule.days : [];
+    if (!days.includes(date.getDay())) return [];
+    let mins = [];
+    if (schedule.mode === "interval") {
+      if (!validTime(schedule.from) || !validTime(schedule.to)) return [];
+      const every = Math.max(MIN_EVERY, Math.round(Number(schedule.every)) || 60);
+      const start = toMinutes(schedule.from);
+      let end = toMinutes(schedule.to);
+      if (end < start) end += 24 * 60;
+      for (let m = start; m <= end; m += every) mins.push(m);
+    } else {
+      mins = [...new Set((schedule.times || []).filter(validTime).map(toMinutes))].sort((a, b) => a - b);
+    }
+    // Date 생성자가 24:00 이상을 다음 날로 넘겨 준다
+    return mins.map((m) => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, m));
+  }
+
+  // 기준 시각 주변(어제~8일 뒤)의 예정 시각을 오름차순으로
+  function slotsAround(schedule, now) {
+    const out = [];
+    for (let k = -1; k <= 8; k++) {
+      out.push(...slotsOn(schedule, new Date(now.getFullYear(), now.getMonth(), now.getDate() + k)));
+    }
+    return out.sort((a, b) => a - b);
+  }
+
+  // 다음 전송 시각 (now보다 뒤). 꺼져 있거나 보낼 시각·요일이 없으면 null.
+  function nextFire(schedule, now = new Date()) {
+    if (!schedule || schedule.enabled === false) return null;
+    return slotsAround(schedule, now).find((d) => d > now) || null;
+  }
+
+  // 지금 보내야 할 예정 시각: 이미 지났지만 graceMin분 안이고, 아직 보내지 않은 가장 최근 시각.
+  function dueFire(schedule, now = new Date(), graceMin = 15) {
+    if (!schedule || schedule.enabled === false) return null;
+    const last = schedule.lastSent == null ? -Infinity : Number(schedule.lastSent);
+    const past = slotsAround(schedule, now).filter((d) => d <= now);
+    const latest = past[past.length - 1];
+    if (!latest || now - latest > graceMin * 60000 || latest.getTime() <= last) return null;
+    return latest;
+  }
+
+  // "오늘 21:00 (2시간 13분 후)"처럼 다음 알림 시각을 사람이 읽기 쉽게
+  const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
+  function describeFire(when, now = new Date()) {
+    const hm = `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
+    const dd = daysBetween(todayStr(now), todayStr(when));
+    const day = dd === 0 ? "오늘" : dd === 1 ? "내일" : `${when.getMonth() + 1}/${when.getDate()}(${WEEKDAYS[when.getDay()]})`;
+    const sec = Math.max(0, Math.ceil((when - now) / 1000));
+    const d = Math.floor(sec / 86400);
+    const hh = Math.floor((sec % 86400) / 3600);
+    const mm = Math.floor((sec % 3600) / 60);
+    const left =
+      d > 0 ? `${d}일 ${hh}시간 후` : hh > 0 ? `${hh}시간 ${mm}분 후` : mm > 0 ? `${mm}분 ${sec % 60}초 후` : `${sec}초 후`;
+    return `${day} ${hm} (${left})`;
+  }
+
+  // 알림에 넣을 한 문장: 다음에 배울 레슨 문장, 다 배웠다면 오늘 복습 문장, 기록이 없으면 전체 문장 중 하나.
+  // when(예정 시각)에 따라 문장이 돌아가므로 같은 날 여러 번 받아도 매번 다른 문장이 온다.
+  function pickSentence(lessons, state, when = new Date()) {
+    const slot = Math.floor(when.getTime() / 60000);
+    let pool = [];
+    if (state) {
+      const next = nextLesson(state, lessons);
+      if (next) pool = next.sentences;
+      else pool = dueCards(state, lessons, todayStr(when));
+    }
+    if (!pool.length) pool = lessons.flatMap((l) => l.sentences);
+    return pool.length ? pool[((slot % pool.length) + pool.length) % pool.length] : null;
+  }
+
+  // 카카오톡 '나에게 보내기' 텍스트 템플릿 (text는 카카오 제한인 200자 이내)
+  function kakaoMessage(item, url) {
+    const s = item && item.sentences ? item.sentences[0] : item;
+    const cut = (t, n) => (t.length > n ? t.slice(0, n - 1) + "…" : t);
+    const head = "[The Ten Minutes] 오늘의 한 문장";
+    const tail = "오늘 10분, 지금 시작해 볼까요?";
+    let text = head + "\n\n";
+    if (s && s.en) text += `${cut(s.en, 90)}\n${cut(s.ko || "", 60)}\n\n`;
+    text = cut(text + tail, 200);
+    const link = url ? { web_url: url, mobile_web_url: url } : {};
+    return { object_type: "text", text, link, button_title: "오늘 10분 시작하기" };
+  }
+
   root.Core = {
     INTERVALS,
+    MIN_EVERY,
+    defaultKakao,
+    validTime,
+    nextFire,
+    dueFire,
+    describeFire,
+    pickSentence,
+    kakaoMessage,
     todayStr,
     addDays,
     daysBetween,
     defaultState,
+    mergeState,
     markStudied,
     currentStreak,
     sentenceId,
