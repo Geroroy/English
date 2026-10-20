@@ -23,19 +23,49 @@ globalThis.LevelUI = function (ui) {
   }
 
   // ---------- 레벨 홈 ----------
+  // 레벨 선택: 작은 알약 버튼 하나. 누르면 세 레벨이 아래로 펼쳐진다.
   function levelSwitch(current) {
-    return h(
+    const menu = h(
       "div",
-      { class: "level-switch", role: "tablist", "aria-label": "레벨" },
+      { class: "level-menu", role: "listbox", hidden: true },
       LEVELS.map((l) =>
         h(
           "button",
-          { role: "tab", "aria-selected": String(l.id === current.id), class: l.id === current.id ? "on" : "", onclick: () => ui.setLevel(l.id) },
-          h("b", {}, l.name),
-          h("small", {}, l.cefr)
+          { role: "option", "aria-selected": String(l.id === current.id), class: l.id === current.id ? "on" : "", onclick: () => ui.setLevel(l.id) },
+          h("span", { class: "dot", style: `--c:${l.color}` }),
+          h("span", { class: "level-name" }, h("b", {}, l.name), h("small", {}, l.cefr)),
+          h("span", { class: "muted small level-tag" }, l.tagline),
+          l.id === current.id ? icon("check") : null
         )
       )
     );
+    const btn = h(
+      "button",
+      { class: "level-pill", "aria-haspopup": "listbox", "aria-expanded": "false" },
+      h("span", { class: "dot", style: `--c:${current.color}` }),
+      h("b", {}, current.name),
+      h("small", {}, current.cefr),
+      icon("down")
+    );
+    const close = () => {
+      menu.hidden = true;
+      btn.setAttribute("aria-expanded", "false");
+      document.removeEventListener("click", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+    const onDoc = (e) => !wrap.contains(e.target) && close();
+    const onKey = (e) => e.key === "Escape" && close();
+    btn.onclick = () => {
+      if (!menu.hidden) return close();
+      menu.hidden = false;
+      btn.setAttribute("aria-expanded", "true");
+      setTimeout(() => {
+        document.addEventListener("click", onDoc);
+        document.addEventListener("keydown", onKey);
+      });
+    };
+    const wrap = h("div", { class: "level-select" }, btn, menu);
+    return wrap;
   }
 
   function renderLevelHome() {
@@ -62,8 +92,7 @@ globalThis.LevelUI = function (ui) {
         );
       });
     mount(
-      levelSwitch(level),
-      h("section", { class: "hero" }, h("p", { class: "eyebrow" }, `${level.cefr} · ${level.name}`), h("h1", {}, level.tagline)),
+      h("section", { class: "hero" }, h("div", { class: "hero-head" }, h("p", { class: "eyebrow" }, "Level"), levelSwitch(level)), h("h1", {}, level.tagline)),
       h("div", { class: "modules" }, cards)
     );
   }

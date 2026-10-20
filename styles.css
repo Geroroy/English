@@ -429,14 +429,40 @@ h1, h2, h3 { font-family: var(--font-heading); }
 :root[data-level="beginner"] .btn, :root[data-level="beginner"] .choice, :root[data-level="beginner"] .module { border-radius: 12px; }
 body { transition: background 0.4s, color 0.4s; }
 
-/* ---------- 레벨 선택 ---------- */
-.level-switch { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 4px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); margin-bottom: 18px; }
-.level-switch button { border: 0; background: none; border-radius: calc(var(--radius) - 3px); padding: 9px 4px; display: flex; flex-direction: column; align-items: center; gap: 1px; color: var(--muted); transition: background 0.2s, color 0.2s; }
-.level-switch button b { font-size: 0.95rem; }
-.level-switch button small { font-family: var(--font-mono); font-size: 0.66rem; letter-spacing: 0.08em; }
-.level-switch button.on { background: var(--brass); color: var(--brass-ink); }
-.hero { padding: 6px 0 18px; }
+/* ---------- 레벨 선택: 알약 버튼 + 아래로 펼쳐지는 메뉴 ---------- */
+.hero { padding: 2px 0 18px; }
+.hero-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
+.hero-head .eyebrow { margin: 0; }
 .hero h1 { font-size: 1.5rem; margin: 0; }
+.level-select { position: relative; }
+.level-pill {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 10px 6px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface);
+  font-size: 0.9rem; transition: border-color 0.2s;
+}
+.level-pill:hover, .level-pill[aria-expanded="true"] { border-color: var(--brass); }
+.level-pill small { font-family: var(--font-mono); font-size: 0.66rem; letter-spacing: 0.08em; color: var(--muted); }
+.level-pill .ico { width: 1em; height: 1em; color: var(--muted); transition: transform 0.2s; }
+.level-pill[aria-expanded="true"] .ico { transform: rotate(180deg); }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--c); flex: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--c) 25%, transparent); }
+.level-menu {
+  position: absolute; right: 0; top: calc(100% + 8px); z-index: 20; min-width: 250px;
+  display: grid; gap: 2px; padding: 6px;
+  background: var(--raise); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
+  transform-origin: top right; animation: drop 0.18s cubic-bezier(.2, .7, .2, 1);
+}
+@keyframes drop { from { opacity: 0; transform: translateY(-6px) scaleY(0.96); } to { opacity: 1; transform: none; } }
+.level-menu button {
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; column-gap: 10px; row-gap: 1px;
+  width: 100%; text-align: left; padding: 9px 10px; border: 0; background: none; border-radius: calc(var(--radius) - 2px);
+}
+.level-menu button:hover { background: color-mix(in srgb, var(--brass) 10%, transparent); }
+.level-menu button.on { color: var(--brass); }
+.level-menu .level-name { display: flex; align-items: baseline; gap: 6px; }
+.level-menu .level-name small { font-family: var(--font-mono); font-size: 0.66rem; letter-spacing: 0.08em; color: var(--muted); }
+.level-menu .level-tag { grid-column: 2; font-size: 0.76rem; }
+.level-menu .ico { color: var(--brass); }
 
 /* ---------- 학습 메뉴 카드 ---------- */
 .modules { display: grid; gap: 10px; }

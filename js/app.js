@@ -66,6 +66,7 @@
     copy: '<rect x="8" y="8" width="12" height="12" rx="1"/><path d="M16 8V4H4v12h4"/>',
     play: '<path d="M7.5 5v14l11-7z"/>',
     check: '<path d="M5 12.5l4.5 4.5L19 7"/>',
+    down: '<path d="M6 9.5l6 6 6-6"/>',
     abc: '<path d="M3.5 16.5l3-9 3 9"/><path d="M4.6 13.5h3.8"/><path d="M12.5 7.5h3.2a2.2 2.2 0 0 1 0 4.4h-3.2zM12.5 11.9h3.6a2.3 2.3 0 0 1 0 4.6h-3.6z"/><path d="M12.5 7.5v9"/><path d="M20.5 9a2.5 2.5 0 0 0-2.3 1.7 4 4 0 0 0 0 2.6 2.5 2.5 0 0 0 2.3 1.7"/>',
     grid: '<rect x="4" y="4" width="6.5" height="6.5"/><rect x="13.5" y="4" width="6.5" height="6.5"/><rect x="4" y="13.5" width="6.5" height="6.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5"/>',
     book: '<path d="M4 5.5a2 2 0 0 1 2-2h6v16H6a2 2 0 0 0-2 2z"/><path d="M20 5.5a2 2 0 0 0-2-2h-6v16h6a2 2 0 0 1 2 2z"/>',
