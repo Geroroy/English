@@ -6,7 +6,7 @@ import vm from "node:vm";
 
 const ctx = {};
 vm.createContext(ctx);
-for (const f of ["js/config.js", "js/content/beginner.js", "js/content/intermediate.js", "js/content/advanced.js"]) {
+for (const f of ["js/config.js", "js/content/private.js", "js/content/pfc.js", "js/content/corporal.js", "js/content/sergeant.js"]) {
   vm.runInContext(readFileSync(new URL(`../${f}`, import.meta.url), "utf8"), ctx);
 }
 const { LEVELS, CONTENT, FEATURES } = ctx;
@@ -19,17 +19,23 @@ function checkQuiz(items, where) {
 }
 
 test("레벨 정의", () => {
-  assert.equal(LEVELS.length, 3);
-  assert.equal(LEVELS.map((l) => l.id).join(","), "beginner,intermediate,advanced");
+  assert.equal(LEVELS.length, 4);
+  assert.equal(LEVELS.map((l) => l.id).join(","), "private,pfc,corporal,sergeant");
   assert.equal(typeof FEATURES.tenMinutes, "boolean");
   for (const l of LEVELS) {
     assert.ok(l.name && l.cefr && l.tagline && l.modules.length);
     for (const m of l.modules) {
       assert.ok(["lesson", "reading", "rush", "tenMinutes"].includes(m.type), `${l.id}.${m.key} type`);
-      if (m.type === "tenMinutes") assert.ok([1, 2, 3].includes(m.lessonLevel));
+      if (m.type === "tenMinutes") assert.ok(Array.isArray(m.lessonRange) && m.lessonRange[0] <= m.lessonRange[1], `${l.id}: lessonRange`);
       else assert.ok(CONTENT[l.id] && CONTENT[l.id][m.key] !== undefined, `${l.id}.${m.key} 콘텐츠 없음`);
     }
   }
+});
+
+test("10분 코스 Day 범위가 계급 순서대로 빈틈없이 이어짐", () => {
+  const ranges = LEVELS.map((l) => l.modules.find((m) => m.type === "tenMinutes").lessonRange);
+  assert.equal(ranges[0][0], 1);
+  for (let i = 1; i < ranges.length; i++) assert.equal(ranges[i][0], ranges[i - 1][1] + 1);
 });
 
 test("단원·리딩·단어 러쉬 형식", () => {

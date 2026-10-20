@@ -2,7 +2,8 @@
 // app.js 가 화면 도구(ui)를 넘겨 주면 렌더 함수들을 돌려 줍니다.
 globalThis.LevelUI = function (ui) {
   const { h, icon, mount, heading, speakBtn, shadowBtn, toast } = ui;
-  const { LEVELS, FEATURES, CONTENT } = globalThis;
+  const { LEVELS, FEATURES, CONTENT, DISCHARGE } = globalThis;
+  const rankIndex = (id) => Math.max(0, LEVELS.findIndex((l) => l.id === id));
 
   const levelById = (id) => LEVELS.find((l) => l.id === id) || LEVELS[0];
   const progressKey = (level, mod) => `${level.id}.${mod.key}`;
@@ -22,6 +23,54 @@ globalThis.LevelUI = function (ui) {
     ui.save();
   }
 
+  // ---------- 진급 · 전역 ----------
+  const activeModules = (level) => level.modules.filter((m) => m.type !== "tenMinutes" || FEATURES.tenMinutes);
+  // 모듈 하나의 진도: { done, total }
+  function moduleProgress(level, mod) {
+    const p = progressOf(level, mod);
+    if (mod.type === "rush") return { done: p.best > 0 ? 1 : 0, total: 1 };
+    if (mod.type === "tenMinutes") return ui.lessonsDoneIn(mod.lessonRange);
+    const total = unitsOf(level, mod).length;
+    return { done: Math.min(p.done.length, total), total };
+  }
+  function levelProgress(level) {
+    return activeModules(level).reduce((a, m) => { const x = moduleProgress(level, m); return { done: a.done + x.done, total: a.total + x.total }; }, { done: 0, total: 0 });
+  }
+  const levelComplete = (level) => { const x = levelProgress(level); return x.total > 0 && x.done >= x.total; };
+  // 현재 계급의 메뉴를 모두 마쳤으면 진급, 병장이면 전역. 바뀐 게 있으면 축하 화면을 띄운다.
+  function checkPromotion() {
+    const s = ui.state();
+    if (s.discharged) return false;
+    const r = rankIndex(s.rank);
+    if (!levelComplete(LEVELS[r])) return false;
+    if (r + 1 < LEVELS.length) {
+      s.rank = LEVELS[r + 1].id;
+      s.level = s.rank;
+      ui.save();
+      ui.applyLevel();
+      celebrate("진급", `${LEVELS[r].name} → ${LEVELS[r + 1].name}`, `${LEVELS[r + 1].cefr} 훈련이 열렸어요.`);
+    } else {
+      s.discharged = true;
+      ui.save();
+      celebrate(DISCHARGE.name, `${LEVELS[r].name} 훈련 완료`, DISCHARGE.tagline);
+    }
+    return true;
+  }
+  function celebrate(word, title, sub) {
+    mount(
+      h("section", { class: "fin" }, h("p", { class: "fin-word" }, word), h("h1", {}, title), h("p", { class: "muted" }, sub), h("button", { class: "btn primary big", onclick: renderLevelHome }, "홈으로", icon("arrow")))
+    );
+  }
+  // 계급 상태 글: 진급한 계급인지, 지금 복무 중인지, 아직인지
+  function rankStatus(level) {
+    const s = ui.state();
+    const r = rankIndex(s.rank);
+    const i = LEVELS.indexOf(level);
+    if (s.discharged || i < r) return { label: "진급 완료", cls: "done" };
+    if (i === r) return { label: "복무 중", cls: "now" };
+    return { label: "미진급", cls: "" };
+  }
+
   // ---------- 레벨 홈 ----------
   // 레벨 선택: 작은 알약 버튼 하나. 누르면 세 레벨이 아래로 펼쳐진다.
   function levelSwitch(current) {
@@ -34,7 +83,7 @@ globalThis.LevelUI = function (ui) {
           { role: "option", "aria-selected": String(l.id === current.id), class: l.id === current.id ? "on" : "", onclick: () => ui.setLevel(l.id) },
           h("span", { class: "dot", style: `--c:${l.color}` }),
           h("span", { class: "level-name" }, h("b", {}, l.name), h("small", {}, l.cefr)),
-          h("span", { class: "muted small level-tag" }, l.tagline),
+          h("span", { class: "muted small level-tag" }, `${rankStatus(l).label} · ${l.tagline}`),
           l.id === current.id ? icon("check") : null
         )
       )
@@ -75,8 +124,8 @@ globalThis.LevelUI = function (ui) {
       .map((m) => {
         let meta;
         if (m.type === "tenMinutes") {
-          const next = ui.nextLessonIn(m.lessonLevel);
-          meta = next ? `다음 · Day ${next.id} ${next.title}` : "이 레벨의 레슨을 모두 마쳤어요 · 복습";
+          const next = ui.nextLessonIn(m.lessonRange);
+          meta = next ? `다음 · Day ${next.id} ${next.title}` : "이 계급의 레슨을 모두 마쳤어요 · 복습";
         } else if (m.type === "rush") {
           meta = `최고 기록 ${progressOf(level, m).best}점`;
         } else {
@@ -91,14 +140,28 @@ globalThis.LevelUI = function (ui) {
           icon("right")
         );
       });
+    const s = ui.state();
+    const lp = levelProgress(level);
+    const st = rankStatus(level);
+    const line = s.discharged
+      ? `${DISCHARGE.name} · ${DISCHARGE.tagline}`
+      : st.cls === "now"
+        ? `${lp.total - lp.done}개 남음 · 다 마치면 ${LEVELS.indexOf(level) + 1 < LEVELS.length ? LEVELS[LEVELS.indexOf(level) + 1].name + " 진급" : "전역"}`
+        : st.cls === "done" ? "진급 완료 · 자유롭게 복습" : `현재 계급 ${LEVELS[rankIndex(s.rank)].name} · 미리 둘러보기`;
     mount(
-      h("section", { class: "hero" }, h("div", { class: "hero-head" }, h("p", { class: "eyebrow" }, "Level"), levelSwitch(level)), h("h1", {}, level.tagline)),
+      h(
+        "section",
+        { class: "hero" },
+        h("div", { class: "hero-head" }, h("p", { class: "eyebrow" }, `Rank · ${level.en}`), levelSwitch(level)),
+        h("h1", {}, level.tagline),
+        h("div", { class: "service" }, h("div", { class: "bar" }, h("i", { style: `width:${lp.total ? Math.round((lp.done / lp.total) * 100) : 0}%` })), h("p", { class: "muted small" }, line))
+      ),
       h("div", { class: "modules" }, cards)
     );
   }
 
   function openModule(level, mod) {
-    if (mod.type === "tenMinutes") return ui.renderTenMinutesHome(mod.lessonLevel);
+    if (mod.type === "tenMinutes") return ui.renderTenMinutesHome(mod.lessonRange);
     if (mod.type === "rush") return renderRush(level, mod);
     renderUnitList(level, mod);
   }
@@ -202,7 +265,7 @@ globalThis.LevelUI = function (ui) {
           onclick: () => {
             markDone(level, mod, unit.id);
             toast(done ? "다시 복습했어요." : "단원 완료!");
-            renderUnitList(level, mod);
+            if (!checkPromotion()) renderUnitList(level, mod);
           }
         },
         done ? "다시 완료 표시" : "이 단원 완료",
@@ -227,7 +290,7 @@ globalThis.LevelUI = function (ui) {
           onclick: () => {
             markDone(level, mod, r.id);
             toast(done ? "다시 읽었어요." : "읽기 완료!");
-            renderUnitList(level, mod);
+            if (!checkPromotion()) renderUnitList(level, mod);
           }
         },
         done ? "다시 완료 표시" : "다 읽었어요",
@@ -310,6 +373,7 @@ globalThis.LevelUI = function (ui) {
       if (record) p.best = score;
       ui.studied(data.seconds);
       ui.save();
+      if (checkPromotion()) return;
       mount(
         h(
           "section",
@@ -326,13 +390,18 @@ globalThis.LevelUI = function (ui) {
     next();
   }
 
-  // 기록 탭에 쓸 레벨별 진도 요약
+  // 기록 탭에 쓸 복무 기록: 현재 계급, 전역까지 진도, 계급별 메뉴 진도
   function progressSummary() {
-    return LEVELS.map((level) =>
+    const s = ui.state();
+    const all = LEVELS.reduce((a, l) => { const x = levelProgress(l); return { done: a.done + x.done, total: a.total + x.total }; }, { done: 0, total: 0 });
+    const rank = s.discharged ? DISCHARGE.name : LEVELS[rankIndex(s.rank)].name;
+    return [
+      h("div", { class: "service big" }, h("p", { class: "eyebrow" }, "현재 계급"), h("p", { class: "rank-name" }, rank), h("div", { class: "bar" }, h("i", { style: `width:${all.total ? Math.round((all.done / all.total) * 100) : 0}%` })), h("p", { class: "muted small" }, `전역까지 ${all.done} / ${all.total}`)),
+      ...LEVELS.map((level) =>
       h(
         "div",
         {},
-        h("p", { class: "eyebrow" }, `${level.cefr} · ${level.name}`),
+        h("p", { class: "eyebrow" }, `${level.cefr} · ${level.name} · ${rankStatus(level).label}`),
         h(
           "ul",
           { class: "lessons" },
@@ -340,13 +409,14 @@ globalThis.LevelUI = function (ui) {
             .filter((m) => m.type !== "tenMinutes" || FEATURES.tenMinutes)
             .map((m) => {
               const p = progressOf(level, m);
-              const text = m.type === "rush" ? `최고 ${p.best}점` : m.type === "tenMinutes" ? `${ui.lessonsDoneIn(m.lessonLevel)} 레슨 완료` : `${p.done.length} / ${unitsOf(level, m).length}`;
-              return h("li", {}, h("span", { class: "no" }, icon(m.icon)), h("span", {}, m.name), h("small", {}, text));
+              const x = moduleProgress(level, m);
+              const text = m.type === "rush" ? `최고 ${p.best}점` : `${x.done} / ${x.total}`;
+              return h("li", { class: x.total && x.done >= x.total ? "done" : "" }, h("span", { class: "no" }, icon(m.icon)), h("span", {}, m.name), h("small", {}, text));
             })
         )
       )
-    );
+    )];
   }
 
-  return { renderLevelHome, progressSummary };
+  return { renderLevelHome, progressSummary, checkPromotion };
 };

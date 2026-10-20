@@ -1,7 +1,7 @@
-// 중급 (CEFR B1–B2) 콘텐츠 — 껍데기. 형식은 js/content/beginner.js 머리말 참고.
+// 상병 (CEFR B1–B2) 콘텐츠 — 껍데기. 형식은 js/content/private.js 머리말 참고.
 // 단어 러쉬: words 배열에 { en, ko }를 추가하면 됩니다. 보기 4개는 다른 단어의 뜻에서 자동으로 뽑습니다 (최소 4개 필요).
 globalThis.CONTENT = globalThis.CONTENT || {};
-globalThis.CONTENT.intermediate = {
+globalThis.CONTENT.corporal = {
   rush: {
     seconds: 60,
     words: [

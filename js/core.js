@@ -34,8 +34,10 @@
       lastStudy: null, // 마지막 학습 날짜
       history: {}, // 날짜 -> 학습한 초
       journal: [], // 작문 기록
-      level: "beginner", // 현재 레벨: beginner | intermediate | advanced
-      modules: {}, // "레벨.모듈" -> { done: [단원 id], best: 점수 }
+      level: "private", // 지금 보고 있는 계급(레벨) id
+      rank: "private", // 진급으로 얻은 현재 계급 id
+      discharged: false, // 병장까지 마치면 true
+      modules: {}, // "계급.모듈" -> { done: [단원 id], best: 점수 }
       settings: { rate: 0.9 }
     };
   }

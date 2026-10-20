@@ -403,30 +403,36 @@ input[type="range"] { flex: 1; min-width: 100px; accent-color: var(--brass); }
 
 /* ======================================================================
    레벨 테마: <html data-level="beginner|intermediate|advanced">
-   초보 = 아침 교실(밝은 하늘색), 중급 = 오후 도서관(크림 + 숲 초록), 고급 = 밤 상영관(네이비 + 브라스, 기본 다크 테마)
+   이등병 = 아침 교실(밝은 하늘색), 일병 = 민트 운동장, 상병 = 오후 도서관(크림 + 숲 초록), 병장 = 밤 상영관(네이비 + 브라스)
    ====================================================================== */
 :root { --font-heading: var(--font-serif-ko); --level-glow: transparent; }
 h1, h2, h3 { font-family: var(--font-heading); }
-:root[data-level="beginner"] {
+:root[data-level="private"] {
   --bg: #f4f8ff; --surface: #ffffff; --raise: #ffffff; --fg: #15213a; --muted: #5d6a85; --line: #d8e1f3;
   --brass: #2f6fed; --brass-ink: #ffffff; --crimson: #e2463d; --good: #2f9e63; --bad: #d9534f;
   --still-a: #cfe0ff; --still-b: #eaf1ff; --radius: 14px; --font-heading: var(--font-ui); --level-glow: #cfe0ff;
   color-scheme: light;
 }
-:root[data-level="intermediate"] {
+:root[data-level="pfc"] {
+  --bg: #f1faf6; --surface: #ffffff; --raise: #ffffff; --fg: #14302a; --muted: #557068; --line: #cfe6dc;
+  --brass: #1f8a70; --brass-ink: #ffffff; --crimson: #e2463d; --good: #1f8a70; --bad: #d9534f;
+  --still-a: #bfe6d8; --still-b: #e4f4ee; --radius: 14px; --font-heading: var(--font-ui); --level-glow: #cdeee2;
+  color-scheme: light;
+}
+:root[data-level="corporal"] {
   --bg: #f1efe6; --surface: #f9f8f2; --raise: #ffffff; --fg: #1d2a21; --muted: #5f6b62; --line: #d7d8c7;
   --brass: #2e6b4a; --brass-ink: #f9f8f2; --crimson: #b3261e; --good: #2e6b4a; --bad: #a33d33;
   --still-a: #c9d6c3; --still-b: #e6ebdf; --radius: 6px; --font-heading: var(--font-serif-ko); --level-glow: #dde5d2;
   color-scheme: light;
 }
-:root[data-level="advanced"] {
+:root[data-level="sergeant"] {
   --bg: #0b0f17; --surface: #121824; --raise: #182031; --fg: #ede6d6; --muted: #9b9484; --line: #2a303b;
   --brass: #c2a26b; --brass-ink: #0b0f17; --crimson: #ef3b2f; --good: #8fb08a; --bad: #d06a5f;
   --still-a: #1b2230; --still-b: #0a0d13; --radius: 4px; --font-heading: var(--font-display); --level-glow: #1f2a3f;
   color-scheme: dark;
 }
-:root[data-level="advanced"] h1, :root[data-level="advanced"] h2 { font-style: italic; font-weight: 500; letter-spacing: 0; }
-:root[data-level="beginner"] .btn, :root[data-level="beginner"] .choice, :root[data-level="beginner"] .module { border-radius: 12px; }
+:root[data-level="sergeant"] h1, :root[data-level="sergeant"] h2 { font-style: italic; font-weight: 500; letter-spacing: 0; }
+:root[data-level="private"] .btn, :root[data-level="private"] .choice, :root[data-level="private"] .module, :root[data-level="pfc"] .btn, :root[data-level="pfc"] .choice, :root[data-level="pfc"] .module { border-radius: 12px; }
 body { transition: background 0.4s, color 0.4s; }
 
 /* ---------- 레벨 선택: 알약 버튼 + 아래로 펼쳐지는 메뉴 ---------- */
@@ -537,3 +543,13 @@ body { transition: background 0.4s, color 0.4s; }
 .rush-word { font-family: var(--font-display); font-size: 2.4rem; font-weight: 600; text-align: center; margin: 20px 0 24px; animation: rise 0.25s ease-out; }
 .rush-stage .choice { padding: 14px; font-size: 1.05rem; text-align: center; }
 .card.left { text-align: left; }
+
+/* ---------- 복무 진도 (계급 진행 막대) ---------- */
+.service { margin-top: 12px; }
+.service .bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
+.service .bar i { display: block; height: 100%; background: var(--brass); border-radius: 3px; transition: width 0.4s; }
+.service p { margin: 6px 0 0; }
+.service.big { margin: 0 0 18px; }
+.service.big .bar { height: 8px; margin-top: 6px; }
+.rank-name { font-family: var(--font-heading); font-size: 1.8rem; font-weight: 600; margin: 0; }
+.lessons li .no .ico { width: 16px; height: 16px; color: var(--brass); }

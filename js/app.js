@@ -13,10 +13,16 @@
   const streakEl = document.getElementById("streak");
 
   // ---------- 저장 ----------
+  const OLD_LEVEL_IDS = { beginner: "private", intermediate: "corporal", advanced: "sergeant" }; // 예전 3레벨 저장값 옮기기
   function load() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) return Object.assign(Core.defaultState(), JSON.parse(raw));
+      if (raw) {
+        const s = Object.assign(Core.defaultState(), JSON.parse(raw));
+        s.level = OLD_LEVEL_IDS[s.level] || s.level;
+        s.rank = OLD_LEVEL_IDS[s.rank] || s.rank;
+        return s;
+      }
     } catch (e) {
       /* 저장소 사용 불가 시 기본값 */
     }
@@ -402,12 +408,14 @@
     applyLevel();
     levelUI.renderLevelHome();
   }
-  // 10분 코스에서 이 레벨(1~3)의 다음 레슨
-  function nextLessonIn(lv) {
-    return LESSONS.find((l) => l.level === lv && !state.completed.includes(l.id)) || null;
+  // 10분 코스에서 이 계급의 Day 범위 [시작, 끝] 안의 다음 레슨
+  const inRange = (l, [a, b]) => l.id >= a && l.id <= b;
+  function nextLessonIn(range) {
+    return LESSONS.find((l) => inRange(l, range) && !state.completed.includes(l.id)) || null;
   }
-  function lessonsDoneIn(lv) {
-    return LESSONS.filter((l) => l.level === lv && state.completed.includes(l.id)).length;
+  function lessonsDoneIn(range) {
+    const all = LESSONS.filter((l) => inRange(l, range));
+    return { done: all.filter((l) => state.completed.includes(l.id)).length, total: all.length };
   }
 
   // 홈: 레벨 선택과 학습 메뉴
@@ -416,8 +424,8 @@
   }
 
   // 10분 코스 홈: 오늘 배울 문장과 번역만 크게
-  function renderTenMinutesHome(lv) {
-    const lesson = nextLessonIn(lv);
+  function renderTenMinutesHome(range) {
+    const lesson = nextLessonIn(range);
     const doneToday = state.lastStudy === today();
     const items = lesson ? lessonItems(lesson) : reviewSentencesForToday();
     if (!items.length) {
@@ -859,6 +867,7 @@
     Core.markStudied(state, today());
     save();
     session = null;
+    levelUI.checkPromotion();
 
     const mins = Math.max(1, Math.round(seconds / 60));
     const next = Core.nextLesson(state, LESSONS);
@@ -978,7 +987,7 @@
         h("h3", {}, "최근 4주"),
         h("div", { class: "calendar" }, last28.map((d) => h("i", { class: state.history[d] ? "on" : "", title: d })))
       ),
-      h("section", { class: "card" }, h("h3", {}, "레벨별 진도"), levelUI.progressSummary()),
+      h("section", { class: "card" }, h("h3", {}, "복무 기록"), levelUI.progressSummary()),
       globalThis.FEATURES.tenMinutes ? h(
         "section",
         { class: "card" },
@@ -1027,7 +1036,8 @@
     },
     nextLessonIn,
     lessonsDoneIn,
-    renderTenMinutesHome
+    renderTenMinutesHome,
+    applyLevel
   });
   applyLevel();
   tabs.forEach((b) => b.prepend(icon(b.dataset.icon)));

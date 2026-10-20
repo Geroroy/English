@@ -1,6 +1,6 @@
-// 고급 (CEFR C1–C2) 콘텐츠 — 껍데기. 형식은 js/content/beginner.js 머리말 참고.
+// 병장 (CEFR C1–C2) 콘텐츠 — 껍데기. 형식은 js/content/private.js 머리말 참고.
 globalThis.CONTENT = globalThis.CONTENT || {};
-globalThis.CONTENT.advanced = {
+globalThis.CONTENT.sergeant = {
   patterns: [
     {
       id: "ap1",
