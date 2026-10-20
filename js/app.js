@@ -64,7 +64,15 @@
     camera: '<path d="M3.5 8h3.2l1.6-2.5h7.4L17.3 8h3.2v11h-17z"/><circle cx="12" cy="13.5" r="3.5"/>',
     flame: '<path d="M12 21c-3.9 0-6.5-2.6-6.5-6 0-4 3.5-5.5 4-10 3 1.8 4.5 4.3 4.5 6.5 1-.6 1.6-1.6 2-2.8 1.6 1.6 2.5 3.6 2.5 6.3 0 3.4-2.6 6-6.5 6z"/>',
     copy: '<rect x="8" y="8" width="12" height="12" rx="1"/><path d="M16 8V4H4v12h4"/>',
-    play: '<path d="M7.5 5v14l11-7z"/>'
+    play: '<path d="M7.5 5v14l11-7z"/>',
+    check: '<path d="M5 12.5l4.5 4.5L19 7"/>',
+    abc: '<path d="M3.5 16.5l3-9 3 9"/><path d="M4.6 13.5h3.8"/><path d="M12.5 7.5h3.2a2.2 2.2 0 0 1 0 4.4h-3.2zM12.5 11.9h3.6a2.3 2.3 0 0 1 0 4.6h-3.6z"/><path d="M12.5 7.5v9"/><path d="M20.5 9a2.5 2.5 0 0 0-2.3 1.7 4 4 0 0 0 0 2.6 2.5 2.5 0 0 0 2.3 1.7"/>',
+    grid: '<rect x="4" y="4" width="6.5" height="6.5"/><rect x="13.5" y="4" width="6.5" height="6.5"/><rect x="4" y="13.5" width="6.5" height="6.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5"/>',
+    book: '<path d="M4 5.5a2 2 0 0 1 2-2h6v16H6a2 2 0 0 0-2 2z"/><path d="M20 5.5a2 2 0 0 0-2-2h-6v16h6a2 2 0 0 1 2 2z"/>',
+    clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+    bolt: '<path d="M13 3 5 13.5h6L10.5 21 19 10.5h-6z"/>',
+    chat: '<path d="M4 5.5h16v10H9l-4 3.5v-3.5H4z"/><path d="M8 9h8M8 12h5"/>',
+    spark: '<path d="M12 3.5v5M12 15.5v5M3.5 12h5M15.5 12h5"/><path d="M6.5 6.5l3 3M14.5 14.5l3 3M6.5 17.5l3-3M14.5 9.5l3-3"/>'
   };
   function icon(name) {
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -278,6 +286,11 @@
 
   // ---------- 탭 ----------
   const tabs = document.querySelectorAll(".tabs button");
+  if (!globalThis.FEATURES.tenMinutes) {
+    document.querySelectorAll('[data-tab="review"], [data-tab="journal"]').forEach((b) => (b.hidden = true));
+    document.querySelector(".clock").hidden = true;
+  }
+  document.querySelector(".tabs").style.gridTemplateColumns = `repeat(${Array.from(tabs).filter((b) => !b.hidden).length}, 1fr)`;
   function setTab(name) {
     tabs.forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
   }
@@ -375,15 +388,46 @@
     return { stage, pager, counter, go, get index() { return idx; } };
   }
 
-  // 홈: 오늘 배울 문장과 번역만 크게
+  // ---------- 레벨 ----------
+  function applyLevel() {
+    const level = LEVELS.find((l) => l.id === state.level) || LEVELS[0];
+    document.documentElement.dataset.level = level.id;
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.content = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim() || level.color;
+  }
+  function setLevel(id) {
+    state.level = id;
+    save();
+    applyLevel();
+    levelUI.renderLevelHome();
+  }
+  // 10분 코스에서 이 레벨(1~3)의 다음 레슨
+  function nextLessonIn(lv) {
+    return LESSONS.find((l) => l.level === lv && !state.completed.includes(l.id)) || null;
+  }
+  function lessonsDoneIn(lv) {
+    return LESSONS.filter((l) => l.level === lv && state.completed.includes(l.id)).length;
+  }
+
+  // 홈: 레벨 선택과 학습 메뉴
   function renderHome() {
-    const lesson = Core.nextLesson(state, LESSONS);
+    levelUI.renderLevelHome();
+  }
+
+  // 10분 코스 홈: 오늘 배울 문장과 번역만 크게
+  function renderTenMinutesHome(lv) {
+    const lesson = nextLessonIn(lv);
     const doneToday = state.lastStudy === today();
     const items = lesson ? lessonItems(lesson) : reviewSentencesForToday();
+    if (!items.length) {
+      mount(h("button", { class: "back", onclick: renderHome }, icon("left"), "홈"), h("section", { class: "card center" }, h("p", {}, "이 레벨의 레슨을 모두 마쳤어요.")));
+      return;
+    }
 
     const view_ = carousel(items, { render: (it) => sentenceCard(it) });
 
     mount(
+      h("button", { class: "back", onclick: renderHome }, icon("left"), "홈"),
       h(
         "div",
         { class: "today" },
@@ -933,10 +977,11 @@
         h("h3", {}, "최근 4주"),
         h("div", { class: "calendar" }, last28.map((d) => h("i", { class: state.history[d] ? "on" : "", title: d })))
       ),
-      h(
+      h("section", { class: "card" }, h("h3", {}, "레벨별 진도"), levelUI.progressSummary()),
+      globalThis.FEATURES.tenMinutes ? h(
         "section",
         { class: "card" },
-        h("h3", {}, "커리큘럼"),
+        h("h3", {}, "10분 코스"),
         [1, 2, 3].map((lv) =>
           h(
             "div",
@@ -945,7 +990,7 @@
             h("ul", { class: "lessons" }, LESSONS.filter((l) => l.level === lv).map((l) => h("li", { class: state.completed.includes(l.id) ? "done" : "" }, h("span", { class: "no" }, String(l.id).padStart(2, "0")), h("span", {}, l.title), h("small", {}, l.pattern.en))))
           )
         )
-      ),
+      ) : null,
       h(
         "section",
         { class: "card" },
@@ -970,6 +1015,20 @@
   }
 
   // ---------- 시작 ----------
+  const levelUI = globalThis.LevelUI({
+    h, icon, mount, heading, speak, speakBtn, shadowBtn, toast,
+    state: () => state,
+    save,
+    setLevel,
+    studied: (seconds) => {
+      state.history[today()] = (state.history[today()] || 0) + seconds;
+      Core.markStudied(state, today());
+    },
+    nextLessonIn,
+    lessonsDoneIn,
+    renderTenMinutesHome
+  });
+  applyLevel();
   tabs.forEach((b) => b.prepend(icon(b.dataset.icon)));
   idleTimer();
   renderStreak();

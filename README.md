@@ -1,7 +1,50 @@
-# The Ten Minutes — 하루 10분, 회화에서 영작까지
+# 영어 훈련소 — 올인원 영어 패키지
 
-하루 **10분**, 실생활 영어 문장 10개를 익히고 최종적으로 **스스로 영작**할 수 있도록 설계된 웹 앱(PWA)입니다.
-설치나 빌드 없이 브라우저에서 바로 실행되고, 휴대폰 홈 화면에 추가하면 앱처럼 쓸 수 있습니다.
+초보·중급·고급 세 레벨로 나뉜 영어 학습 웹 앱(PWA)입니다. 레벨 버튼을 누르면 화면 테마가 통째로 바뀝니다.
+설치나 빌드 없이 브라우저에서 바로 실행되고, PC와 휴대폰 어디서든 같은 주소로 쓸 수 있습니다.
+
+## 레벨과 메뉴 (CEFR 기준)
+
+| 레벨 | CEFR | 테마 | 메뉴 |
+|---|---|---|---|
+| 초보 | A1–A2 | 아침 교실 (밝은 하늘색) | 읽는 법(파닉스) · 발음 · 기초 문법 · 기초 리딩 · 10분 코스 Day 1–7 |
+| 중급 | B1–B2 | 오후 도서관 (크림 + 숲 초록) | 단어 러쉬 · 중급 문법 · 리딩 · 10분 코스 Day 8–14 |
+| 고급 | C1–C2 | 밤 상영관 (네이비 + 브라스) | 원어민 패턴 · 원어민 표현 · 리딩 · 10분 코스 Day 15–20 |
+
+레벨·메뉴 정의는 `js/config.js`, 각 레벨의 내용은 `js/content/{beginner,intermediate,advanced}.js` 에 있습니다.
+초보는 내용이 채워져 있고, 중급·고급은 **형식을 보여 주는 껍데기**(모듈당 단원 1개, 예문 1개)만 들어 있습니다.
+
+## 내용 채우는 법
+
+`js/content/beginner.js` 머리말에 형식이 적혀 있습니다. 요약:
+
+```js
+// 단원 (읽는 법 · 발음 · 문법 · 원어민 패턴 · 원어민 표현)
+{ id: "gr9", title: "제목", ko: "부제", intro: "설명",
+  sections: [
+    { type: "text", body: "설명 문단" },
+    { type: "examples", items: [{ en: "영어 문장", ko: "뜻", note: "보충 설명(선택)" }] },
+    { type: "pairs", items: [{ a: "rice", b: "lice", ko: "쌀 / 이" }] },      // 최소 대립쌍
+    { type: "table", head: ["열1", "열2"], rows: [["값", "값"]] },
+    { type: "quiz", items: [{ q: "문제", choices: ["보기1", "보기2"], answer: 0, explain: "해설" }] }
+  ] }
+// 리딩
+{ id: "rd5", title: "제목", cefr: "A2", topic: "주제", paragraphs: ["문단"], glossary: [{ w: "단어", ko: "뜻" }], questions: [/* quiz 와 같은 형식 */] }
+// 단어 러쉬 (중급): rush.words 에 { en, ko } 추가. 4개 이상 필요.
+```
+
+추가한 뒤 `node --test tests/*.test.mjs` 를 실행하면 형식 실수를 잡아 줍니다.
+
+## 10분 코스 끄기 / 제거
+
+`js/config.js` 의 `FEATURES.tenMinutes` 를 `false` 로 바꾸면 상단 타이머, 복습 탭, 작문노트 탭, 10분 코스 카드가 모두 사라집니다.
+완전히 지우려면 그 상태에서 `js/lessons.js`, `js/scenes.js`, `js/audio.js`, `audio/`, `tools/` 와 `js/app.js` 의 "학습 세션" 부분을 삭제하면 됩니다.
+
+---
+
+# 10분 코스 (The Ten Minutes)
+
+아래는 10분 코스 모듈에 대한 설명입니다.
 
 ## 하루 10분 학습 흐름
 
@@ -46,7 +89,10 @@ GitHub Pages 등 아무 정적 호스팅에 그대로 올려도 됩니다. 학�
 
 ```
 index.html               화면 틀
-styles.css               스타일 (어두운 상영관 / 아이보리 종이 테마)
+styles.css               스타일 (레벨별 3가지 테마)
+js/config.js             기능 스위치, 레벨·메뉴 정의
+js/content/*.js          레벨별 콘텐츠 (초보 · 중급 · 고급)
+js/levels.js             레벨 홈, 단원·리딩·단어 러쉬 화면
 js/lessons.js            커리큘럼 (레슨 20개 × 10문장, 원어민 표현 40개) + 자유 작문 주제
 js/scenes.js             문장별 장면 사진 목록
 js/audio.js              문장별 녹음 파일 목록 (자동 생성)
@@ -57,6 +103,7 @@ tools/generate-audio.mjs 음성 생성기
 tools/fetch-photos.mjs   사진 받기
 sw.js                    오프라인 캐시
 tests/core.test.mjs      로직·데이터 테스트
+tests/content.test.mjs   레벨 콘텐츠 형식 테스트
 docs/design-brief.md     "오늘의 문장" 화면 디자인 브리프
 ```
 
