@@ -867,7 +867,8 @@
     Core.markStudied(state, today());
     save();
     session = null;
-    levelUI.checkPromotion();
+    // 이번 레슨으로 진급·전역했다면 축하 화면을 그대로 둔다 (아래 완료 화면이 덮어쓰지 않도록)
+    if (levelUI.checkPromotion()) return;
 
     const mins = Math.max(1, Math.round(seconds / 60));
     const next = Core.nextLesson(state, LESSONS);
