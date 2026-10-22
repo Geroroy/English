@@ -1040,11 +1040,47 @@
     renderTenMinutesHome,
     applyLevel
   });
+  // 카카오톡 안의 브라우저로 열면 진도가 카톡 브라우저에만 저장된다.
+  // 평소 쓰는 브라우저로 옮겨 열도록 한 번 안내한다. (닫으면 다시 안 보임)
+  function kakaoNotice() {
+    if (!/KAKAOTALK/i.test(navigator.userAgent)) return;
+    const KEY = "kakao-notice-closed";
+    try {
+      if (localStorage.getItem(KEY)) return;
+    } catch (e) {
+      /* 무시 */
+    }
+    const ios = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const where = ios ? "오른쪽 아래 공유 버튼(⋯)에서 'Safari로 열기'" : "오른쪽 위 ⋮ 메뉴에서 '다른 브라우저로 열기'";
+    const bar = h(
+      "div",
+      { class: "kakao-notice", role: "note" },
+      h("p", {}, h("b", {}, "카카오톡 안에서 열려 있어요. "), `진도를 잘 이어 가려면 ${where}를 눌러 평소 쓰는 브라우저에서 열어 주세요.`),
+      h(
+        "button",
+        {
+          class: "link",
+          onclick: () => {
+            bar.remove();
+            try {
+              localStorage.setItem(KEY, "1");
+            } catch (e) {
+              /* 무시 */
+            }
+          }
+        },
+        "알겠어요"
+      )
+    );
+    document.body.prepend(bar);
+  }
+
   applyLevel();
   tabs.forEach((b) => b.prepend(icon(b.dataset.icon)));
   idleTimer();
   renderStreak();
   route("home");
+  kakaoNotice();
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   }
